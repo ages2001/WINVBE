@@ -1,0 +1,70 @@
+; WINVBE v1.0 - Universal VESA/VGA/SVGA display driver
+; OEMSETUP.INF for Windows 3.0 Setup:
+;   Display -> "Other display (Requires disk from OEM)" -> path of this folder
+; All files Setup needs are in this folder - no Windows disks are needed.
+
+[disks]
+1 =. ,"Microsoft Windows 3.0 Disk #1",vgasys.fon
+2 =. ,"Microsoft Windows 3.0 Disk #2",vga850.fon
+3 =. ,"Microsoft Windows 3.0 Disk #3",vgacolor.gr2
+4 =. ,"Microsoft Windows 3.0 Disk #4",cga40woa.fon
+W =. ,"WINVBE v1.0 Display Driver Disk",winvbe.drv
+
+[display]
+;profile = driver, description, resolution, 286 grabber, logo code, VDD, 386 grabber, ega.sys, logo data, optional section
+winvbe   = W:winvbe.drv, "WINVBE v1.0 VESA, Small fonts", "100,96,96", W:wvbcolor.gr2, W:wvblogo.lgo, x:*vddvga, W:wvb.gr3,, W:wvblogo.rle, winvbe
+winvbel  = W:winvbe.drv, "WINVBE v1.0 VESA, Large fonts", "100,120,120", W:wvbcolor.gr2, W:wvblogo.lgo, x:*vddvga, W:wvb.gr3,, W:wvblogo.rle, winvbel
+
+; file, destination, .ini file, section, old line, new line
+
+[winvbe]
+W:winvbecf.exe, 0:, system.ini, WINVBE, "Depth=", "Depth=0"
+,, system.ini, WINVBE, "DPI=", "DPI=96"
+
+[winvbel]
+W:winvbecf.exe, 0:, system.ini, WINVBE, "Depth=", "Depth=0"
+,, system.ini, WINVBE, "DPI=", "DPI=120"
+
+; ---- sections Windows 3.0 Setup reads from this file; the files are in
+; this folder (W:), so Setup does not ask for the Windows disks ----
+
+; copy these fonts depending on the 386 grabber being used
+[wvb.gr3]
+W:CGA40WOA.FON,W:CGA40850.FON
+W:CGA80WOA.FON,W:CGA80850.FON
+W:EGA40WOA.FON,W:EGA40850.FON
+W:EGA80WOA.FON,W:EGA80850.FON
+
+[codepages]
+863 = W:xlat863.bin, W:vga863.fon, "French Canadian (863)"
+861 = W:xlat861.bin, W:vga861.fon, "Icelandic (861)"
+865 = W:xlat865.bin, W:vga865.fon, "Norway & Denmark (865)"
+850 = W:xlat850.bin, W:vga850.fon, "International (850)"
+860 = W:xlat860.bin, W:vga860.fon, "Portuguese (860)"
+437 =              ,             , "Standard (437)"
+
+[sysfonts]
+W:vgasys.fon,"VGA (640x480) resolution System Font", "100,96,96"
+W:wvbsys.fon,"WINVBE System Font (120 dpi)", "100,120,120"
+
+[fixedfonts]
+W:vgafix.fon,"VGA (640x480) resolution Fixed System Font", "100,96,96"
+W:wvbfix.fon,"WINVBE Fixed System Font (120 dpi)", "100,120,120"
+
+[oemfonts]
+W:vgaoem.fon,"VGA (640x480) resolution Terminal Font (USA/Europe)", "100,96,96",1
+W:wvboem.fon,"WINVBE Terminal Font (120 dpi)", "100,120,120",1
+
+[fonts]
+W:HELVE.FON, "Helv 8,10,12,14,18,24 (VGA res)", "100,96,96"
+W:HELVF.FON, "Helv 8,10,12,14,18,24 (8514/a res)", "100,120,120"
+W:COURE.FON, "Courier 10,12,15 (VGA res)", "100,96,96"
+W:COURF.FON, "Courier 10,12,15 (8514/a res)", "100,120,120"
+W:TMSRE.FON, "Tms Rmn 8,10,12,14,18,24 (VGA res)", "100,96,96"
+W:TMSRF.FON, "Tms Rmn 8,10,12,14,18,24 (8514/a res)", "100,120,120"
+W:SYMBOLE.FON, "Symbol 8,10,12,14,18,24 (VGA res)", "100,96,96"
+W:SYMBOLF.FON, "Symbol 8,10,12,14,18,24 (8514/a res)", "100,120,120"
+W:ROMAN.FON, "Roman (All res)",   "CONTINUOUSSCALING"
+W:SCRIPT.FON, "Script (All res)", "CONTINUOUSSCALING"
+W:MODERN.FON, "Modern (All res)", "CONTINUOUSSCALING"
+

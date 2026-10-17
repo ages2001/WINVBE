@@ -1,0 +1,41 @@
+/* WINVBECF for Windows 1.x/2.x: no combo boxes, no dialog fonts, no
+   captioned dialogs on Windows 1.x - list boxes and plain check boxes */
+#include <windows.h>
+#include "winvbecf.h"
+
+IDD_MAIN DIALOG 2, 2, 318, 222
+STYLE WS_POPUP | WS_DLGFRAME
+BEGIN
+    CTEXT           "WINVBE Display Settings", -1, 0, 3, 318, 9
+    LTEXT           "", IDC_INFO, 8, 15, 304, 46
+    LTEXT           "Resolution:", -1, 8, 62, 100, 8
+    LISTBOX         IDC_MODES, 8, 72, 122, 84, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    CONTROL         "Custom:", IDC_CUSTOM, "Button", BS_CHECKBOX | WS_TABSTOP, 8, 161, 40, 10
+    EDITTEXT        IDC_CUSTW, 50, 160, 28, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "x", -1, 81, 162, 6, 8
+    EDITTEXT        IDC_CUSTH, 89, 160, 28, 12, ES_AUTOHSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "", IDC_DETAILS, 8, 175, 126, 8
+    LTEXT           "Colors:", -1, 138, 62, 84, 8
+    LISTBOX         IDC_DEPTH, 138, 72, 84, 52, WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Refresh:", -1, 228, 62, 82, 8
+    LISTBOX         IDC_REFRESH, 228, 72, 82, 52, WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Monitor:", -1, 138, 128, 84, 8
+    LISTBOX         IDC_TIMING, 138, 138, 84, 20, WS_BORDER | WS_TABSTOP
+    LTEXT           "Memory:", -1, 228, 128, 82, 8
+    LISTBOX         IDC_ACCESS, 228, 138, 82, 20, WS_BORDER | WS_TABSTOP
+    CONTROL         "Debug log", IDC_DEBUG, "Button", BS_CHECKBOX | WS_TABSTOP, 138, 163, 84, 10
+    LTEXT           "", IDC_CURRENT, 8, 188, 304, 8
+    PUSHBUTTON      "About", IDC_ABOUT, 148, 202, 50, 14
+    DEFPUSHBUTTON   "OK", IDOK, 204, 202, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 260, 202, 50, 14
+END
+
+IDD_ABOUT DIALOG 30, 24, 236, 118
+STYLE WS_POPUP | WS_DLGFRAME
+BEGIN
+    CTEXT           "WINVBE Universal VESA/VGA/SVGA Display Driver", -1, 4, 8, 228, 9
+    CTEXT           "Version 1.0 for Windows 1.x and 2.x", -1, 4, 19, 228, 9
+    LTEXT           "VBE 1.2 - 3.0 BIOSes through the VGA window at A000h, 8/15/16/24/32 bits per pixel, EDID monitor detection, VBE 3.0 refresh rates and custom resolutions on Bochs, QEMU and VirtualBox.", -1, 10, 34, 216, 44
+    LTEXT           "To remove WINVBE run INSTALL /VGA from DOS.", -1, 10, 80, 216, 9
+    DEFPUSHBUTTON   "OK", IDOK, 93, 98, 50, 14
+END

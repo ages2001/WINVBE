@@ -1,0 +1,87 @@
+; WINVBE v1.0 - universal VESA/VGA/SVGA display driver
+; Windows XP x64 / Server 2003 x64
+;
+; Windows 2000/XP/2003: Device Manager > Display adapters > (adapter) >
+;   Update Driver > Install from a specific location > Don't search >
+;   Have Disk > this folder.
+; Windows NT 4.0: Control Panel > Display > Settings > Display Type >
+;   Change > Have Disk > this folder.
+
+[Version]
+Signature="$CHICAGO$"
+Provider=%WVB%
+ClassGUID={4D36E968-E325-11CE-BFC1-08002BE10318}
+Class=Display
+DriverVer=10/06/2026,1.0.0.0
+
+[DestinationDirs]
+DefaultDestDir   = 11
+winvbe.Miniport  = 12
+winvbe.Display   = 11
+winvbe.Tools     = 11
+
+[SourceDisksNames]
+1 = %Disk%,,,
+
+[SourceDisksFiles]
+winvbe.sys   = 1
+winvbe.dll   = 1
+winvbecf.exe = 1
+
+[Manufacturer]
+%WVB% = WINVBE.Mfg,NTamd64
+
+[WINVBE.Mfg.NTamd64]
+%WVB.Desc% = winvbe, PCI\CC_0300
+%WVB.Desc% = winvbe, PCI\CC_0001
+
+[winvbe]
+CopyFiles = winvbe.Miniport, winvbe.Display, winvbe.Tools
+
+[winvbe.Miniport]
+winvbe.sys
+
+[winvbe.Display]
+winvbe.dll
+
+[winvbe.Tools]
+winvbecf.exe
+
+[winvbe.SoftwareSettings]
+AddReg = winvbe_SoftwareDeviceSettings
+
+[winvbe_SoftwareDeviceSettings]
+HKR,, InstalledDisplayDrivers,      %REG_MULTI_SZ%, winvbe
+HKR,, VgaCompatible,                %REG_DWORD%,    0
+HKR,, DefaultSettings.BitsPerPel,   %REG_DWORD%,    16
+HKR,, DefaultSettings.XResolution,  %REG_DWORD%,    1024
+HKR,, DefaultSettings.YResolution,  %REG_DWORD%,    768
+HKR,, DefaultSettings.VRefresh,     %REG_DWORD%,    60
+
+[winvbe.GeneralConfigData]
+MaximumDeviceMemoryConfiguration = 128
+
+[winvbe.Services]
+AddService = winvbe, 0x00000002, winvbe_Service_Inst, winvbe_EventLog_Inst
+
+[winvbe_Service_Inst]
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 1                  ; SERVICE_SYSTEM_START
+ErrorControl   = 0                  ; SERVICE_ERROR_IGNORE
+LoadOrderGroup = Video
+ServiceBinary  = %12%\winvbe.sys
+
+[winvbe_EventLog_Inst]
+AddReg = winvbe_EventLog_AddReg
+
+[winvbe_EventLog_AddReg]
+HKR,,EventMessageFile,0x00020000,"%SystemRoot%\System32\IoLogMsg.dll;%SystemRoot%\System32\drivers\winvbe.sys"
+HKR,,TypesSupported,0x00010001,7
+
+[Strings]
+WVB          = "WINVBE"
+WVB.Desc     = "WINVBE Universal VESA/VGA/SVGA"
+Disk         = "WINVBE v1.0 for Windows NT"
+REG_SZ       = 0x00000000
+REG_MULTI_SZ = 0x00010000
+REG_DWORD    = 0x00010001

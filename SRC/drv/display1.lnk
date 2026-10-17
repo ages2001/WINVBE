@@ -1,0 +1,31 @@
+format windows dll
+name winvbe1.drv
+option modname=DISPLAY
+option description 'DISPLAY : 100, 96, 96 : WINVBE Universal VESA/VGA/SVGA for Windows 1.0x'
+option map=winvbe1.map
+option heapsize=1024
+option nodefaultlibs
+option quiet
+libpath /opt/watcom/lib286/dos
+library clibl.lib
+segment type CODE PRELOAD FIXED
+segment type DATA PRELOAD FIXED
+import GETMODULEHANDLE KERNEL.47
+import GETPROCADDRESS KERNEL.50
+export BITBLT.1
+export COLORINFO.2
+export CONTROL.3
+export DISABLE.4
+export ENABLE.5
+export ENUMDFONTS.6
+export ENUMOBJ.7
+export OUTPUT.8
+export PIXEL.9
+export REALIZEOBJECT.10
+export STRBLT.11
+export SCANLR.12
+export DEVICEMODE.13
+export INQUIRE.101
+export SETCURSOR.102
+export MOVECURSOR.103
+export CHECKCURSOR.104

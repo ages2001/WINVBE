@@ -1,0 +1,52 @@
+#include <windows.h>
+#include "winvbecf.h"
+
+IDI_APP ICON winvbecf.ico
+
+IDD_MAIN DIALOG 8, 8, 292, 224
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
+CAPTION "WINVBE Display Settings"
+FONT 8, "Helv"
+BEGIN
+    GROUPBOX        "Graphics adapter and monitor", -1, 6, 3, 280, 54
+    LTEXT           "", IDC_INFO, 12, 13, 270, 41
+    GROUPBOX        "Screen resolution", -1, 6, 60, 140, 128
+    LISTBOX         IDC_MODES, 12, 72, 128, 82, LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    CONTROL         "Custom:", IDC_CUSTOM, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 159, 34, 10
+    EDITTEXT        IDC_CUSTW, 48, 157, 30, 12, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "x", -1, 81, 159, 6, 8
+    EDITTEXT        IDC_CUSTH, 89, 157, 30, 12, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "", IDC_DETAILS, 12, 173, 130, 10
+    GROUPBOX        "Options", -1, 152, 60, 134, 128
+    LTEXT           "Colors:", -1, 158, 74, 40, 8
+    COMBOBOX        IDC_DEPTH, 202, 72, 80, 80, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Refresh:", -1, 158, 92, 40, 8
+    COMBOBOX        IDC_REFRESH, 202, 90, 80, 100, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Monitor:", -1, 158, 110, 40, 8
+    COMBOBOX        IDC_TIMING, 202, 108, 80, 40, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT           "Memory:", -1, 158, 128, 40, 8
+    COMBOBOX        IDC_ACCESS, 202, 126, 80, 50, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT           "Font size:", -1, 158, 145, 40, 8
+    CONTROL         "Small (96 dpi)", IDC_SMALL, "Button", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 202, 144, 80, 10
+    CONTROL         "Large (120 dpi)", IDC_LARGE, "Button", BS_AUTORADIOBUTTON, 202, 155, 80, 10
+    CONTROL         "Debug log", IDC_DEBUG, "Button", BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP, 158, 172, 80, 10
+    LTEXT           "", IDC_CURRENT, 8, 192, 278, 9
+    CONTROL         "Use WINVBE as the display driver", IDC_ENABLE, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 206, 124, 10
+    PUSHBUTTON      "&About", IDC_ABOUT, 136, 204, 40, 14
+    DEFPUSHBUTTON   "OK", IDOK, 182, 204, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 236, 204, 50, 14
+END
+
+IDD_ABOUT DIALOG 30, 24, 236, 138
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "About WINVBE"
+FONT 8, "Helv"
+BEGIN
+    ICON            IDI_APP, -1, 10, 10, 18, 20
+    LTEXT           "WINVBE Universal VESA/VGA/SVGA Display Driver", -1, 40, 10, 190, 9
+    LTEXT           "Version 1.0", -1, 40, 21, 190, 9
+    LTEXT           "For Windows 3.0, 3.1, Windows for Workgroups 3.1x and Windows 95, 98 and ME.", -1, 40, 36, 190, 18
+    LTEXT           "VBE 1.2 - 3.0 BIOSes with linear or banked frame buffers, 8/15/16/24/32 bits per pixel, EDID monitor detection, VBE 3.0 refresh rates and custom resolutions on Bochs, QEMU and VirtualBox.", -1, 40, 56, 190, 36
+    LTEXT           "Large fonts: glyphs derived from DejaVu (Bitstream Vera licence).", -1, 40, 94, 190, 18
+    DEFPUSHBUTTON   "OK", IDOK, 93, 118, 50, 14
+END

@@ -1,0 +1,40 @@
+/* WINVBE display driver resources.
+   USER (NT 3.5 - XP) reads RCDATA 1 from the display driver: the OEM
+   information block (icon/cursor sizes, border widths).  Without it the
+   system metrics become garbage and dialogs never show up. */
+#include <winver.h>
+
+1 RCDATA
+BEGIN
+    17, 17,     /* cxIcon/cyIcon "OEM" sizes (as in framebuf/vga) */
+    2, 2,
+    1, 1,
+    0,
+    1, 1        /* cxBorder, cyBorder */
+END
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION     1,0,0,0
+PRODUCTVERSION  1,0,0,0
+FILEOS          VOS_NT_WINDOWS32
+FILETYPE        VFT_DRV
+FILESUBTYPE     VFT2_DRV_DISPLAY
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904B0"
+        BEGIN
+            VALUE "CompanyName",      "WINVBE\0"
+            VALUE "FileDescription",  "WINVBE VESA display driver\0"
+            VALUE "FileVersion",      "1.0\0"
+            VALUE "InternalName",     "winvbe.dll\0"
+            VALUE "OriginalFilename", "winvbe.dll\0"
+            VALUE "ProductName",      "WINVBE\0"
+            VALUE "ProductVersion",   "1.0\0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

@@ -1,0 +1,40 @@
+format windows
+name winvbeo.exe
+option description 'WINVBE display settings for Windows 1.x/2.x'
+option stack=8k
+option heapsize=2k
+option nodefaultlibs
+option quiet
+option map=winvbeo.map
+libpath /opt/watcom/lib286/dos
+library clibl.lib
+segment type CODE PRELOAD FIXED
+segment type DATA PRELOAD MOVEABLE
+import INITTASK KERNEL.91
+import WAITEVENT KERNEL.30
+import GLOBALALLOC KERNEL.15
+import GLOBALFREE KERNEL.17
+import GLOBALLOCK KERNEL.18
+import GLOBALUNLOCK KERNEL.19
+import MAKEPROCINSTANCE KERNEL.51
+import FREEPROCINSTANCE KERNEL.52
+import GETPROFILEINT KERNEL.57
+import WRITEPROFILESTRING KERNEL.59
+import MESSAGEBOX USER.1
+import OLDEXITWINDOWS USER.2
+import INITAPP USER.5
+import ENABLEWINDOW USER.34
+import GETDC USER.66
+import RELEASEDC USER.68
+import DIALOGBOX USER.87
+import ENDDIALOG USER.88
+import GETDLGITEM USER.91
+import SETDLGITEMTEXT USER.92
+import SETDLGITEMINT USER.94
+import GETDLGITEMINT USER.95
+import CHECKDLGBUTTON USER.97
+import ISDLGBUTTONCHECKED USER.98
+import SENDMESSAGE USER.111
+import ESCAPE GDI.38
+
+

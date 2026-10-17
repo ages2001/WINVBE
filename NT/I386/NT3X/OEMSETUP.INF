@@ -1,0 +1,452 @@
+; WINVBE v1.0 - universal VESA display driver for Windows NT 3.1, 3.5, 3.51
+;
+; Windows NT Setup (Main group) > Options > Change System Settings >
+;   Display > Other > path of this folder (e.g. A:\ or C:\WINVBE\NT\I386\NT3X).
+; The resolution can be changed later with WINVBECF.EXE (in SYSTEM32).
+; WINVBE.SYS and WINVBE.DLL of this folder are the Windows NT 3.x ones.
+;
+; Tag 2: Windows NT 3.1 loads the Video group in the order of
+; GroupOrderList\Video: 1 (VIDEOPRT itself), 2, 3, ... and VGA (tag 10)
+; last - WINVBE after VIDEOPRT and before VGA gets \Device\Video0. VGA
+; stays installed for full-screen MS-DOS.
+
+[Identification]
+    OptionType = VIDEO
+
+[Options]
+    "WINVBE 640x480x8"       = winvbe,  8,  640,  480, 60, 0
+    "WINVBE 640x480x15"      = winvbe, 15,  640,  480, 60, 0
+    "WINVBE 640x480x16"      = winvbe, 16,  640,  480, 60, 0
+    "WINVBE 640x480x24"      = winvbe, 24,  640,  480, 60, 0
+    "WINVBE 640x480x32"      = winvbe, 32,  640,  480, 60, 0
+    "WINVBE 800x600x8"       = winvbe,  8,  800,  600, 60, 0
+    "WINVBE 800x600x15"      = winvbe, 15,  800,  600, 60, 0
+    "WINVBE 800x600x16"      = winvbe, 16,  800,  600, 60, 0
+    "WINVBE 800x600x24"      = winvbe, 24,  800,  600, 60, 0
+    "WINVBE 800x600x32"      = winvbe, 32,  800,  600, 60, 0
+    "WINVBE 1024x768x8"      = winvbe,  8, 1024,  768, 60, 0
+    "WINVBE 1024x768x15"     = winvbe, 15, 1024,  768, 60, 0
+    "WINVBE 1024x768x16"     = winvbe, 16, 1024,  768, 60, 0
+    "WINVBE 1024x768x24"     = winvbe, 24, 1024,  768, 60, 0
+    "WINVBE 1024x768x32"     = winvbe, 32, 1024,  768, 60, 0
+    "WINVBE 1152x864x8"      = winvbe,  8, 1152,  864, 60, 0
+    "WINVBE 1152x864x15"     = winvbe, 15, 1152,  864, 60, 0
+    "WINVBE 1152x864x16"     = winvbe, 16, 1152,  864, 60, 0
+    "WINVBE 1152x864x24"     = winvbe, 24, 1152,  864, 60, 0
+    "WINVBE 1152x864x32"     = winvbe, 32, 1152,  864, 60, 0
+    "WINVBE 1280x720x8"      = winvbe,  8, 1280,  720, 60, 0
+    "WINVBE 1280x720x15"     = winvbe, 15, 1280,  720, 60, 0
+    "WINVBE 1280x720x16"     = winvbe, 16, 1280,  720, 60, 0
+    "WINVBE 1280x720x24"     = winvbe, 24, 1280,  720, 60, 0
+    "WINVBE 1280x720x32"     = winvbe, 32, 1280,  720, 60, 0
+    "WINVBE 1280x768x8"      = winvbe,  8, 1280,  768, 60, 0
+    "WINVBE 1280x768x15"     = winvbe, 15, 1280,  768, 60, 0
+    "WINVBE 1280x768x16"     = winvbe, 16, 1280,  768, 60, 0
+    "WINVBE 1280x768x24"     = winvbe, 24, 1280,  768, 60, 0
+    "WINVBE 1280x768x32"     = winvbe, 32, 1280,  768, 60, 0
+    "WINVBE 1280x800x8"      = winvbe,  8, 1280,  800, 60, 0
+    "WINVBE 1280x800x15"     = winvbe, 15, 1280,  800, 60, 0
+    "WINVBE 1280x800x16"     = winvbe, 16, 1280,  800, 60, 0
+    "WINVBE 1280x800x24"     = winvbe, 24, 1280,  800, 60, 0
+    "WINVBE 1280x800x32"     = winvbe, 32, 1280,  800, 60, 0
+    "WINVBE 1280x960x8"      = winvbe,  8, 1280,  960, 60, 0
+    "WINVBE 1280x960x15"     = winvbe, 15, 1280,  960, 60, 0
+    "WINVBE 1280x960x16"     = winvbe, 16, 1280,  960, 60, 0
+    "WINVBE 1280x960x24"     = winvbe, 24, 1280,  960, 60, 0
+    "WINVBE 1280x960x32"     = winvbe, 32, 1280,  960, 60, 0
+    "WINVBE 1280x1024x8"     = winvbe,  8, 1280, 1024, 60, 0
+    "WINVBE 1280x1024x15"    = winvbe, 15, 1280, 1024, 60, 0
+    "WINVBE 1280x1024x16"    = winvbe, 16, 1280, 1024, 60, 0
+    "WINVBE 1280x1024x24"    = winvbe, 24, 1280, 1024, 60, 0
+    "WINVBE 1280x1024x32"    = winvbe, 32, 1280, 1024, 60, 0
+    "WINVBE 1360x768x8"      = winvbe,  8, 1360,  768, 60, 0
+    "WINVBE 1360x768x15"     = winvbe, 15, 1360,  768, 60, 0
+    "WINVBE 1360x768x16"     = winvbe, 16, 1360,  768, 60, 0
+    "WINVBE 1360x768x24"     = winvbe, 24, 1360,  768, 60, 0
+    "WINVBE 1360x768x32"     = winvbe, 32, 1360,  768, 60, 0
+    "WINVBE 1366x768x8"      = winvbe,  8, 1366,  768, 60, 0
+    "WINVBE 1366x768x15"     = winvbe, 15, 1366,  768, 60, 0
+    "WINVBE 1366x768x16"     = winvbe, 16, 1366,  768, 60, 0
+    "WINVBE 1366x768x24"     = winvbe, 24, 1366,  768, 60, 0
+    "WINVBE 1366x768x32"     = winvbe, 32, 1366,  768, 60, 0
+    "WINVBE 1400x1050x8"     = winvbe,  8, 1400, 1050, 60, 0
+    "WINVBE 1400x1050x15"    = winvbe, 15, 1400, 1050, 60, 0
+    "WINVBE 1400x1050x16"    = winvbe, 16, 1400, 1050, 60, 0
+    "WINVBE 1400x1050x24"    = winvbe, 24, 1400, 1050, 60, 0
+    "WINVBE 1400x1050x32"    = winvbe, 32, 1400, 1050, 60, 0
+    "WINVBE 1440x900x8"      = winvbe,  8, 1440,  900, 60, 0
+    "WINVBE 1440x900x15"     = winvbe, 15, 1440,  900, 60, 0
+    "WINVBE 1440x900x16"     = winvbe, 16, 1440,  900, 60, 0
+    "WINVBE 1440x900x24"     = winvbe, 24, 1440,  900, 60, 0
+    "WINVBE 1440x900x32"     = winvbe, 32, 1440,  900, 60, 0
+    "WINVBE 1600x900x8"      = winvbe,  8, 1600,  900, 60, 0
+    "WINVBE 1600x900x15"     = winvbe, 15, 1600,  900, 60, 0
+    "WINVBE 1600x900x16"     = winvbe, 16, 1600,  900, 60, 0
+    "WINVBE 1600x900x24"     = winvbe, 24, 1600,  900, 60, 0
+    "WINVBE 1600x900x32"     = winvbe, 32, 1600,  900, 60, 0
+    "WINVBE 1600x1200x8"     = winvbe,  8, 1600, 1200, 60, 0
+    "WINVBE 1600x1200x15"    = winvbe, 15, 1600, 1200, 60, 0
+    "WINVBE 1600x1200x16"    = winvbe, 16, 1600, 1200, 60, 0
+    "WINVBE 1600x1200x24"    = winvbe, 24, 1600, 1200, 60, 0
+    "WINVBE 1600x1200x32"    = winvbe, 32, 1600, 1200, 60, 0
+    "WINVBE 1680x1050x8"     = winvbe,  8, 1680, 1050, 60, 0
+    "WINVBE 1680x1050x15"    = winvbe, 15, 1680, 1050, 60, 0
+    "WINVBE 1680x1050x16"    = winvbe, 16, 1680, 1050, 60, 0
+    "WINVBE 1680x1050x24"    = winvbe, 24, 1680, 1050, 60, 0
+    "WINVBE 1680x1050x32"    = winvbe, 32, 1680, 1050, 60, 0
+    "WINVBE 1920x1080x8"     = winvbe,  8, 1920, 1080, 60, 0
+    "WINVBE 1920x1080x15"    = winvbe, 15, 1920, 1080, 60, 0
+    "WINVBE 1920x1080x16"    = winvbe, 16, 1920, 1080, 60, 0
+    "WINVBE 1920x1080x24"    = winvbe, 24, 1920, 1080, 60, 0
+    "WINVBE 1920x1080x32"    = winvbe, 32, 1920, 1080, 60, 0
+    "WINVBE 1920x1200x8"     = winvbe,  8, 1920, 1200, 60, 0
+    "WINVBE 1920x1200x15"    = winvbe, 15, 1920, 1200, 60, 0
+    "WINVBE 1920x1200x16"    = winvbe, 16, 1920, 1200, 60, 0
+    "WINVBE 1920x1200x24"    = winvbe, 24, 1920, 1200, 60, 0
+    "WINVBE 1920x1200x32"    = winvbe, 32, 1920, 1200, 60, 0
+    "WINVBE 2048x1536x8"     = winvbe,  8, 2048, 1536, 60, 0
+    "WINVBE 2048x1536x15"    = winvbe, 15, 2048, 1536, 60, 0
+    "WINVBE 2048x1536x16"    = winvbe, 16, 2048, 1536, 60, 0
+    "WINVBE 2048x1536x24"    = winvbe, 24, 2048, 1536, 60, 0
+    "WINVBE 2048x1536x32"    = winvbe, 32, 2048, 1536, 60, 0
+    "WINVBE 2560x1440x8"     = winvbe,  8, 2560, 1440, 60, 0
+    "WINVBE 2560x1440x15"    = winvbe, 15, 2560, 1440, 60, 0
+    "WINVBE 2560x1440x16"    = winvbe, 16, 2560, 1440, 60, 0
+    "WINVBE 2560x1440x24"    = winvbe, 24, 2560, 1440, 60, 0
+    "WINVBE 2560x1440x32"    = winvbe, 32, 2560, 1440, 60, 0
+    "WINVBE 2560x1600x8"     = winvbe,  8, 2560, 1600, 60, 0
+    "WINVBE 2560x1600x15"    = winvbe, 15, 2560, 1600, 60, 0
+    "WINVBE 2560x1600x16"    = winvbe, 16, 2560, 1600, 60, 0
+    "WINVBE 2560x1600x24"    = winvbe, 24, 2560, 1600, 60, 0
+    "WINVBE 2560x1600x32"    = winvbe, 32, 2560, 1600, 60, 0
+    "WINVBE 3840x2160x8"     = winvbe,  8, 3840, 2160, 60, 0
+    "WINVBE 3840x2160x15"    = winvbe, 15, 3840, 2160, 60, 0
+    "WINVBE 3840x2160x16"    = winvbe, 16, 3840, 2160, 60, 0
+    "WINVBE 3840x2160x24"    = winvbe, 24, 3840, 2160, 60, 0
+    "WINVBE 3840x2160x32"    = winvbe, 32, 3840, 2160, 60, 0
+
+[MiniportDrivers]
+    winvbe = !SERVICE_KERNEL_DRIVER, Video, !SERVICE_ERROR_IGNORE, 2, {winvbe}, 0, "%SystemRoot%\System32\IoLogMsg.dll;%SystemRoot%\System32\drivers\winvbe.sys", 7
+
+[Identify]
+    read-syms Identification
+    set Status     = STATUS_SUCCESSFUL
+    set Identifier = $(OptionType)
+    set Media      = #("Source Media Descriptions", 1, 1)
+    Return $(Status) $(Identifier) $(Media)
+
+[ReturnOptions]
+    set Status         = STATUS_FAILED
+    set OptionList     = {}
+    set OptionTextList = {}
+    set LanguageList   = ^(LanguagesSupported, 1)
+    Ifcontains(i) $($0) in $(LanguageList)
+        goto returnoptions
+    else
+        set Status = STATUS_NOLANGUAGE
+        goto finish_ReturnOptions
+    endif
+returnoptions = +
+    set OptionList     = ^(Options, 0)
+    set OptionTextList = ^(OptionsText$($0), 1)
+    set Status         = STATUS_SUCCESSFUL
+finish_ReturnOptions = +
+    Return $(Status) $(OptionList) $(OptionTextList)
+
+[ServicesEntry]
+    CurrentEntry = "" ? $(!LIBHANDLE) GetDevicemapValue Video \Device\Video0
+
+[InstallOption]
+    set Status       = STATUS_FAILED
+    set DrivesToFree = {}
+    set Option   = $($1)
+    set SrcDir   = $($2)
+    set AddCopy  = $($3)
+    set DoCopy   = $($4)
+    set DoConfig = $($5)
+    set LanguageList = ^(LanguagesSupported, 1)
+    Ifcontains(i) $($0) in $(LanguageList)
+    else
+        set Status = STATUS_NOLANGUAGE
+        goto finish_InstallOption
+    endif
+    read-syms Strings$($0)
+    set OptionList = ^(Options, 0)
+    ifcontains $(Option) in $(OptionList)
+    else
+        goto finish_InstallOption
+    endif
+    set OptionList = ""
+    set MiniportDriver    = #(Options, $(Option), 1)
+    set BitsPerPel        = #(Options, $(Option), 2)
+    set XResolution       = #(Options, $(Option), 3)
+    set YResolution       = #(Options, $(Option), 4)
+    set VRefresh          = #(Options, $(Option), 5)
+    set Interlaced        = #(Options, $(Option), 6)
+    set Type              = $(#(MiniportDrivers, $(MiniportDriver), 1))
+    set Group             =   #(MiniportDrivers, $(MiniportDriver), 2)
+    set ErrorControl      = $(#(MiniportDrivers, $(MiniportDriver), 3))
+    set Tag               =   #(MiniportDrivers, $(MiniportDriver), 4)
+    set InstalledDisplays =   #(MiniportDrivers, $(MiniportDriver), 5)
+    set VgaCompatible     =   #(MiniportDrivers, $(MiniportDriver), 6)
+    set EventMessageFile  =   #(MiniportDrivers, $(MiniportDriver), 7)
+    set TypesSupported    =   #(MiniportDrivers, $(MiniportDriver), 8)
+    read-syms ServicesEntry
+    detect    ServicesEntry
+    ifstr(i) $(AddCopy) == "YES"
+        shell "subroutn.inf" DoAskSourceEx $(SrcDir) $(String2)
+        ifint $($ShellCode) != $(!SHELL_CODE_OK)
+            Debug-Output "OEMSETUP.INF: shelling DoAskSourceEx failed"
+            goto finish_InstallOption
+        endif
+        ifstr(i) $($R0) == STATUS_SUCCESSFUL
+            set SrcDir = $($R1)
+            ifstr(i) $($R2) != ""
+                set DrivesToFree = >($(DrivesToFree), $($R2))
+            endif
+        else
+            Debug-Output "OEMSETUP.INF: user cancelled asking source"
+            goto finish_InstallOption
+        endif
+        install Install-AddCopyOption
+        ifstr(i) $(STF_INSTALL_OUTCOME) != "STF_SUCCESS"
+            Debug-Output "OEMSETUP.INF: adding files to the copy list failed"
+            goto finish_InstallOption
+        endif
+    endif
+    ifstr(i) $(DoCopy) == "YES"
+        read-syms ProgressCopy$($0)
+        install Install-DoCopyOption
+        ifstr(i) $(STF_INSTALL_OUTCOME) == "STF_FAILURE"
+            Debug-Output "OEMSETUP.INF: copying files failed"
+            goto finish_InstallOption
+        else-ifstr(i) $(STF_INSTALL_OUTCOME) == "STF_USERQUIT"
+            set Status = STATUS_USERCANCEL
+            goto finish_InstallOption
+        endif
+    endif
+    ifstr(i) $(DoConfig) == "YES"
+        shell "registry.inf" CheckSetupModify
+        ifint $($ShellCode) != $(!SHELL_CODE_OK)
+            goto finish_InstallOption
+        endif
+        ifstr(i) $($R0) != STATUS_SUCCESSFUL
+            goto finish_InstallOption
+        endif
+        set ServiceNode   = $(MiniportDriver)
+        set ServiceBinary = %SystemRoot%\System32\drivers\winvbe.sys
+        set ServicesValues = { +
+                {Type,           0, $(!REG_VT_DWORD),     $(Type)                  }, +
+                {Start,          0, $(!REG_VT_DWORD),     $(!SERVICE_SYSTEM_START) }, +
+                {Group,          0, $(!REG_VT_SZ),        $(Group)                 }, +
+                {ErrorControl,   0, $(!REG_VT_DWORD),     $(ErrorControl)          }, +
+                {Tag,            0, $(!REG_VT_DWORD),     $(Tag)                   }, +
+                {BinaryPathName, 0, $(!REG_VT_EXPAND_SZ), $(ServiceBinary)         }  +
+                }
+        set ParametersValues = { +
+                {InstalledDisplayDrivers,     0, $(!REG_VT_MULTI_SZ), $(InstalledDisplays) }, +
+                {VgaCompatible,               0, $(!REG_VT_DWORD),    $(VgaCompatible)     }, +
+                {DefaultSettings.BitsPerPel,  0, $(!REG_VT_DWORD),    $(BitsPerPel)        }, +
+                {DefaultSettings.XResolution, 0, $(!REG_VT_DWORD),    $(XResolution)       }, +
+                {DefaultSettings.YResolution, 0, $(!REG_VT_DWORD),    $(YResolution)       }, +
+                {DefaultSettings.VRefresh,    0, $(!REG_VT_DWORD),    $(VRefresh)          }, +
+                {DefaultSettings.Interlaced,  0, $(!REG_VT_DWORD),    $(Interlaced)        }  +
+                }
+        set DeviceValues   = {}
+        set EventLogValues = { +
+                {EventMessageFile, 0, $(!REG_VT_EXPAND_SZ), $(EventMessageFile) }, +
+                {TypesSupported,   0, $(!REG_VT_DWORD),     $(TypesSupported)   }  +
+                }
+        shell "registry.inf" MakeServicesEntry $(ServiceNode)      +
+                                               $(ServicesValues)   +
+                                               $(ParametersValues) +
+                                               $(DeviceValues)     +
+                                               $(EventLogValues)   +
+                                               Device0
+        ifint $($ShellCode) != $(!SHELL_CODE_OK)
+            Debug-Output "OEMSETUP.INF: couldn't execute MakeServicesEntry in registry.inf"
+            goto errorconfig
+        endif
+        ifstr(i) $($R0) != STATUS_SUCCESSFUL
+            Debug-Output "OEMSETUP.INF: MakeServicesEntry failed"
+            goto errorconfig
+        endif
+        ; the driver used until now is switched off - VGA stays
+        ifstr(i) $(CurrentEntry) != $(MiniportDriver)
+            ifstr(i) $(CurrentEntry) != VGA
+                ifstr(i) $(CurrentEntry) != VgaSave
+                    ifstr(i) $(CurrentEntry) != ""
+                        shell "registry.inf" ModifyServicesEntry $(CurrentEntry) $(!SERVICE_DISABLED)
+                    endif
+                endif
+            endif
+        endif
+        goto configdone
+errorconfig = +
+        goto finish_InstallOption
+configdone = +
+    endif
+    set Status = STATUS_SUCCESSFUL
+finish_InstallOption = +
+    ForListDo $(DrivesToFree)
+        LibraryProcedure STATUS,$(!LIBHANDLE), DeleteNetConnection $($) "TRUE"
+    EndForListDo
+    Return $(Status)
+
+[Install-AddCopyOption]
+    set STF_VITAL = ""
+    AddSectionKeyFileToCopyList Files-DisplayMiniportDrivers $(MiniportDriver) $(SrcDir) $(!STF_WINDOWSSYSPATH)\drivers
+    ForListDo $(InstalledDisplays)
+        AddSectionKeyFileToCopyList Files-DisplayDLLs $($) $(SrcDir) $(!STF_WINDOWSSYSPATH)
+    EndForListDo
+    AddSectionFilesToCopyList Files-Tools $(SrcDir) $(!STF_WINDOWSSYSPATH)
+    exit
+
+[Install-DoCopyOption]
+    CopyFilesInCopyList
+    exit
+
+[Source Media Descriptions]
+    1 = "WINVBE v1.0 for Windows NT 3.x", TAGFILE = winvbe.sys
+
+[ProductType]
+STF_PRODUCT  = Winnt
+STF_PLATFORM = I386
+
+[Files-DisplayDLLs]
+winvbe = 1,WINVBE.DLL
+
+[Files-DisplayMiniportDrivers]
+winvbe = 1,WINVBE.SYS
+
+[Files-Tools]
+winvbecf = 1,WINVBECF.EXE
+
+[LanguagesSupported]
+    ENG
+
+[OptionsTextENG]
+    "WINVBE 640x480x8"       = "WINVBE VESA  640 x  480,  8 bit (256 colors)"
+    "WINVBE 640x480x15"      = "WINVBE VESA  640 x  480, 15 bit (32768 colors)"
+    "WINVBE 640x480x16"      = "WINVBE VESA  640 x  480, 16 bit (65536 colors)"
+    "WINVBE 640x480x24"      = "WINVBE VESA  640 x  480, 24 bit (16.7 million colors)"
+    "WINVBE 640x480x32"      = "WINVBE VESA  640 x  480, 32 bit (16.7 million colors)"
+    "WINVBE 800x600x8"       = "WINVBE VESA  800 x  600,  8 bit (256 colors)"
+    "WINVBE 800x600x15"      = "WINVBE VESA  800 x  600, 15 bit (32768 colors)"
+    "WINVBE 800x600x16"      = "WINVBE VESA  800 x  600, 16 bit (65536 colors)"
+    "WINVBE 800x600x24"      = "WINVBE VESA  800 x  600, 24 bit (16.7 million colors)"
+    "WINVBE 800x600x32"      = "WINVBE VESA  800 x  600, 32 bit (16.7 million colors)"
+    "WINVBE 1024x768x8"      = "WINVBE VESA 1024 x  768,  8 bit (256 colors)"
+    "WINVBE 1024x768x15"     = "WINVBE VESA 1024 x  768, 15 bit (32768 colors)"
+    "WINVBE 1024x768x16"     = "WINVBE VESA 1024 x  768, 16 bit (65536 colors)"
+    "WINVBE 1024x768x24"     = "WINVBE VESA 1024 x  768, 24 bit (16.7 million colors)"
+    "WINVBE 1024x768x32"     = "WINVBE VESA 1024 x  768, 32 bit (16.7 million colors)"
+    "WINVBE 1152x864x8"      = "WINVBE VESA 1152 x  864,  8 bit (256 colors)"
+    "WINVBE 1152x864x15"     = "WINVBE VESA 1152 x  864, 15 bit (32768 colors)"
+    "WINVBE 1152x864x16"     = "WINVBE VESA 1152 x  864, 16 bit (65536 colors)"
+    "WINVBE 1152x864x24"     = "WINVBE VESA 1152 x  864, 24 bit (16.7 million colors)"
+    "WINVBE 1152x864x32"     = "WINVBE VESA 1152 x  864, 32 bit (16.7 million colors)"
+    "WINVBE 1280x720x8"      = "WINVBE VESA 1280 x  720,  8 bit (256 colors)"
+    "WINVBE 1280x720x15"     = "WINVBE VESA 1280 x  720, 15 bit (32768 colors)"
+    "WINVBE 1280x720x16"     = "WINVBE VESA 1280 x  720, 16 bit (65536 colors)"
+    "WINVBE 1280x720x24"     = "WINVBE VESA 1280 x  720, 24 bit (16.7 million colors)"
+    "WINVBE 1280x720x32"     = "WINVBE VESA 1280 x  720, 32 bit (16.7 million colors)"
+    "WINVBE 1280x768x8"      = "WINVBE VESA 1280 x  768,  8 bit (256 colors)"
+    "WINVBE 1280x768x15"     = "WINVBE VESA 1280 x  768, 15 bit (32768 colors)"
+    "WINVBE 1280x768x16"     = "WINVBE VESA 1280 x  768, 16 bit (65536 colors)"
+    "WINVBE 1280x768x24"     = "WINVBE VESA 1280 x  768, 24 bit (16.7 million colors)"
+    "WINVBE 1280x768x32"     = "WINVBE VESA 1280 x  768, 32 bit (16.7 million colors)"
+    "WINVBE 1280x800x8"      = "WINVBE VESA 1280 x  800,  8 bit (256 colors)"
+    "WINVBE 1280x800x15"     = "WINVBE VESA 1280 x  800, 15 bit (32768 colors)"
+    "WINVBE 1280x800x16"     = "WINVBE VESA 1280 x  800, 16 bit (65536 colors)"
+    "WINVBE 1280x800x24"     = "WINVBE VESA 1280 x  800, 24 bit (16.7 million colors)"
+    "WINVBE 1280x800x32"     = "WINVBE VESA 1280 x  800, 32 bit (16.7 million colors)"
+    "WINVBE 1280x960x8"      = "WINVBE VESA 1280 x  960,  8 bit (256 colors)"
+    "WINVBE 1280x960x15"     = "WINVBE VESA 1280 x  960, 15 bit (32768 colors)"
+    "WINVBE 1280x960x16"     = "WINVBE VESA 1280 x  960, 16 bit (65536 colors)"
+    "WINVBE 1280x960x24"     = "WINVBE VESA 1280 x  960, 24 bit (16.7 million colors)"
+    "WINVBE 1280x960x32"     = "WINVBE VESA 1280 x  960, 32 bit (16.7 million colors)"
+    "WINVBE 1280x1024x8"     = "WINVBE VESA 1280 x 1024,  8 bit (256 colors)"
+    "WINVBE 1280x1024x15"    = "WINVBE VESA 1280 x 1024, 15 bit (32768 colors)"
+    "WINVBE 1280x1024x16"    = "WINVBE VESA 1280 x 1024, 16 bit (65536 colors)"
+    "WINVBE 1280x1024x24"    = "WINVBE VESA 1280 x 1024, 24 bit (16.7 million colors)"
+    "WINVBE 1280x1024x32"    = "WINVBE VESA 1280 x 1024, 32 bit (16.7 million colors)"
+    "WINVBE 1360x768x8"      = "WINVBE VESA 1360 x  768,  8 bit (256 colors)"
+    "WINVBE 1360x768x15"     = "WINVBE VESA 1360 x  768, 15 bit (32768 colors)"
+    "WINVBE 1360x768x16"     = "WINVBE VESA 1360 x  768, 16 bit (65536 colors)"
+    "WINVBE 1360x768x24"     = "WINVBE VESA 1360 x  768, 24 bit (16.7 million colors)"
+    "WINVBE 1360x768x32"     = "WINVBE VESA 1360 x  768, 32 bit (16.7 million colors)"
+    "WINVBE 1366x768x8"      = "WINVBE VESA 1366 x  768,  8 bit (256 colors)"
+    "WINVBE 1366x768x15"     = "WINVBE VESA 1366 x  768, 15 bit (32768 colors)"
+    "WINVBE 1366x768x16"     = "WINVBE VESA 1366 x  768, 16 bit (65536 colors)"
+    "WINVBE 1366x768x24"     = "WINVBE VESA 1366 x  768, 24 bit (16.7 million colors)"
+    "WINVBE 1366x768x32"     = "WINVBE VESA 1366 x  768, 32 bit (16.7 million colors)"
+    "WINVBE 1400x1050x8"     = "WINVBE VESA 1400 x 1050,  8 bit (256 colors)"
+    "WINVBE 1400x1050x15"    = "WINVBE VESA 1400 x 1050, 15 bit (32768 colors)"
+    "WINVBE 1400x1050x16"    = "WINVBE VESA 1400 x 1050, 16 bit (65536 colors)"
+    "WINVBE 1400x1050x24"    = "WINVBE VESA 1400 x 1050, 24 bit (16.7 million colors)"
+    "WINVBE 1400x1050x32"    = "WINVBE VESA 1400 x 1050, 32 bit (16.7 million colors)"
+    "WINVBE 1440x900x8"      = "WINVBE VESA 1440 x  900,  8 bit (256 colors)"
+    "WINVBE 1440x900x15"     = "WINVBE VESA 1440 x  900, 15 bit (32768 colors)"
+    "WINVBE 1440x900x16"     = "WINVBE VESA 1440 x  900, 16 bit (65536 colors)"
+    "WINVBE 1440x900x24"     = "WINVBE VESA 1440 x  900, 24 bit (16.7 million colors)"
+    "WINVBE 1440x900x32"     = "WINVBE VESA 1440 x  900, 32 bit (16.7 million colors)"
+    "WINVBE 1600x900x8"      = "WINVBE VESA 1600 x  900,  8 bit (256 colors)"
+    "WINVBE 1600x900x15"     = "WINVBE VESA 1600 x  900, 15 bit (32768 colors)"
+    "WINVBE 1600x900x16"     = "WINVBE VESA 1600 x  900, 16 bit (65536 colors)"
+    "WINVBE 1600x900x24"     = "WINVBE VESA 1600 x  900, 24 bit (16.7 million colors)"
+    "WINVBE 1600x900x32"     = "WINVBE VESA 1600 x  900, 32 bit (16.7 million colors)"
+    "WINVBE 1600x1200x8"     = "WINVBE VESA 1600 x 1200,  8 bit (256 colors)"
+    "WINVBE 1600x1200x15"    = "WINVBE VESA 1600 x 1200, 15 bit (32768 colors)"
+    "WINVBE 1600x1200x16"    = "WINVBE VESA 1600 x 1200, 16 bit (65536 colors)"
+    "WINVBE 1600x1200x24"    = "WINVBE VESA 1600 x 1200, 24 bit (16.7 million colors)"
+    "WINVBE 1600x1200x32"    = "WINVBE VESA 1600 x 1200, 32 bit (16.7 million colors)"
+    "WINVBE 1680x1050x8"     = "WINVBE VESA 1680 x 1050,  8 bit (256 colors)"
+    "WINVBE 1680x1050x15"    = "WINVBE VESA 1680 x 1050, 15 bit (32768 colors)"
+    "WINVBE 1680x1050x16"    = "WINVBE VESA 1680 x 1050, 16 bit (65536 colors)"
+    "WINVBE 1680x1050x24"    = "WINVBE VESA 1680 x 1050, 24 bit (16.7 million colors)"
+    "WINVBE 1680x1050x32"    = "WINVBE VESA 1680 x 1050, 32 bit (16.7 million colors)"
+    "WINVBE 1920x1080x8"     = "WINVBE VESA 1920 x 1080,  8 bit (256 colors)"
+    "WINVBE 1920x1080x15"    = "WINVBE VESA 1920 x 1080, 15 bit (32768 colors)"
+    "WINVBE 1920x1080x16"    = "WINVBE VESA 1920 x 1080, 16 bit (65536 colors)"
+    "WINVBE 1920x1080x24"    = "WINVBE VESA 1920 x 1080, 24 bit (16.7 million colors)"
+    "WINVBE 1920x1080x32"    = "WINVBE VESA 1920 x 1080, 32 bit (16.7 million colors)"
+    "WINVBE 1920x1200x8"     = "WINVBE VESA 1920 x 1200,  8 bit (256 colors)"
+    "WINVBE 1920x1200x15"    = "WINVBE VESA 1920 x 1200, 15 bit (32768 colors)"
+    "WINVBE 1920x1200x16"    = "WINVBE VESA 1920 x 1200, 16 bit (65536 colors)"
+    "WINVBE 1920x1200x24"    = "WINVBE VESA 1920 x 1200, 24 bit (16.7 million colors)"
+    "WINVBE 1920x1200x32"    = "WINVBE VESA 1920 x 1200, 32 bit (16.7 million colors)"
+    "WINVBE 2048x1536x8"     = "WINVBE VESA 2048 x 1536,  8 bit (256 colors)"
+    "WINVBE 2048x1536x15"    = "WINVBE VESA 2048 x 1536, 15 bit (32768 colors)"
+    "WINVBE 2048x1536x16"    = "WINVBE VESA 2048 x 1536, 16 bit (65536 colors)"
+    "WINVBE 2048x1536x24"    = "WINVBE VESA 2048 x 1536, 24 bit (16.7 million colors)"
+    "WINVBE 2048x1536x32"    = "WINVBE VESA 2048 x 1536, 32 bit (16.7 million colors)"
+    "WINVBE 2560x1440x8"     = "WINVBE VESA 2560 x 1440,  8 bit (256 colors)"
+    "WINVBE 2560x1440x15"    = "WINVBE VESA 2560 x 1440, 15 bit (32768 colors)"
+    "WINVBE 2560x1440x16"    = "WINVBE VESA 2560 x 1440, 16 bit (65536 colors)"
+    "WINVBE 2560x1440x24"    = "WINVBE VESA 2560 x 1440, 24 bit (16.7 million colors)"
+    "WINVBE 2560x1440x32"    = "WINVBE VESA 2560 x 1440, 32 bit (16.7 million colors)"
+    "WINVBE 2560x1600x8"     = "WINVBE VESA 2560 x 1600,  8 bit (256 colors)"
+    "WINVBE 2560x1600x15"    = "WINVBE VESA 2560 x 1600, 15 bit (32768 colors)"
+    "WINVBE 2560x1600x16"    = "WINVBE VESA 2560 x 1600, 16 bit (65536 colors)"
+    "WINVBE 2560x1600x24"    = "WINVBE VESA 2560 x 1600, 24 bit (16.7 million colors)"
+    "WINVBE 2560x1600x32"    = "WINVBE VESA 2560 x 1600, 32 bit (16.7 million colors)"
+    "WINVBE 3840x2160x8"     = "WINVBE VESA 3840 x 2160,  8 bit (256 colors)"
+    "WINVBE 3840x2160x15"    = "WINVBE VESA 3840 x 2160, 15 bit (32768 colors)"
+    "WINVBE 3840x2160x16"    = "WINVBE VESA 3840 x 2160, 16 bit (65536 colors)"
+    "WINVBE 3840x2160x24"    = "WINVBE VESA 3840 x 2160, 24 bit (16.7 million colors)"
+    "WINVBE 3840x2160x32"    = "WINVBE VESA 3840 x 2160, 32 bit (16.7 million colors)"
+
+[ProgressCopyENG]
+    ProCaption   = "WINVBE Setup"
+    ProCancel    = "Cancel"
+    ProCancelMsg = "The display driver is not completely installed.  Are you sure you want "+
+                   "to cancel copying files?"
+    ProCancelCap = "Setup Message"
+    ProText1     = "Copying:"
+    ProText2     = "To:"
+
+[StringsENG]
+    String1 = "Display"
+    String2 = "Please enter the full path of the WINVBE files for Windows NT 3.x "+
+              "(the folder NT\I386\NT3X of the WINVBE package), then choose Continue."

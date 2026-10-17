@@ -1,0 +1,662 @@
+WINVBE v1.0 - Windows 1.0-XP için evrensel VESA/VGA/SVGA ekran sürücüsü
+========================================================================
+(Bu dosya UTF-8 kodlamasındadır.)
+
+WINVBE, ekran kartına özel kod yerine kartın VESA BIOS Extensions (VBE)
+arayüzünü kullanan, VBEMP ve VBESVGA tarzında genel bir ekran sürücüsüdür.
+Şunlarda çalışır:
+  * Windows 3.0 ve 3.1, tüm çalışma modlarında: real (WIN /R), standard
+    (WIN /S) ve 386 enhanced (WIN /3),
+  * Windows for Workgroups 3.1 ve 3.11 (3.11 yalnızca 386 enhanced modda
+    çalışır); Windows 3.1 gibi, WIN31 klasörüyle kurulur,
+  * Windows 95, 98 ve ME (Aygıt Yöneticisi ile kurulur),
+  * Windows 2.x (2.03, 2.1x) ve Windows/386 2.x,
+  * Windows 1.0x (1.01 ... 1.04),
+  * Windows NT 3.1, 3.5, 3.51, 4.0, 2000, XP ve Server 2003 (x86) ile
+    Windows XP / Server 2003 x64 (miniport WINVBE.SYS + ekran sürücüsü
+    WINVBE.DLL, bkz. "Windows NT").
+
+Dosyalar
+--------
+  INSTALL.EXE    tüm Windows sürümleri için DOS kurulum / ayar programı
+  915PATCH.EXE   Intel tümleşik grafiklerin video BIOS'una çözünürlük
+                 ekleyen DOS aracı (Linux'taki 915resolution gibi)
+  915PATCH.VXD   aynısı; Windows açılırken çalışır (SYSTEM.INI), MS-DOS
+                 istemi olmayan Windows ME ve benzerleri için
+  GDITEST.EXE    GDI test programı (isteğe bağlı)
+  WIN31\         Windows 3.1 için her şey: WINVBE.DRV, WINVBE.386 (386
+                 enhanced mod yardımcı VxD'si), WINVBECF.EXE (ayar
+                 programı), WVBPOWER.SCR (monitör güç tasarrufu), WVB*.FON
+                 (büyük sistem yazı tipleri),
+                 OEMSETUP.INF ve Setup'ın Windows 3.1 disketlerinden
+                 isteyeceği Microsoft dosyaları (VGA yazı tipleri,
+                 grabber'lar, VDDVGA30.386)
+  WIN30\         Windows 3.0 için aynısı (Windows 3.0 dosyalarıyla)
+  WIN9X\         Windows 95/98/ME: WINVBE.INF (Aygıt Yöneticisi için),
+                 WINVBE.DRV, WINVBE.386, WINVBECF.EXE, WVBPOWER.SCR,
+                 915PATCH.VXD
+  WIN2X\         Windows 2.x ve Windows/386: WINVBE.DRV, WINVBECF.EXE,
+                 WINVBE.LGO (açılış logosu), WINVBE.GRB, PREP2X.BAT
+  WIN1X\         Windows 1.0x: WINVBE.DRV, WINVBECF.EXE, WINVBE.LGO,
+                 PATCH1X.BAT
+  NT\            Windows NT:
+   I386\NT3X\    Windows NT 3.1, 3.5, 3.51: WINVBE.SYS, WINVBE.DLL,
+                 WINVBECF.EXE (ayar ve kurulum), OEMSETUP.INF
+   I386\NT4-XP\  Windows NT 4.0, 2000, XP, Server 2003 (x86): WINVBE.SYS,
+                 WINVBE.DLL, WINVBECF.EXE, WINVBE.INF
+   AMD64\        Windows XP / Server 2003 x64: aynı dosyalar, 64 bit
+  README.TXT     İngilizce belge
+  SRC\           tüm kaynak kod ve derleme betikleri
+
+  WIN30, WIN31 ve WIN2X klasörlerinde, Windows disketleri gerekmesin diye
+  Microsoft dosyaları (yazı tipleri, ekran yakalayıcılar, VDDVGA30.386,
+  WIN.CNF) bulunur. Bunlar Microsoft Windows'a aittir ve yalnızca kendi
+  lisanslı Windows kopyanızla kullanım içindir; başkalarına dağıtmayın.
+
+Özellikler
+----------
+  * VBE 1.2, 2.0 ve 3.0 BIOS'lar; doğrusal çerçeve tamponu (LFB) veya
+    A000h'deki VGA penceresi (64K'lık bank'lar), otomatik seçilir. LFB
+    adresi kullanılmadan önce doğrulanır (PCI BAR kontrolü ve VGA penceresi
+    üzerinden geri okuma); "Above 4G decoding" / Resizable BAR yüzünden
+    4 GB'ın üstüne taşınmış gibi erişilemeyen bir tamponda yanlış adrese
+    yazmak yerine VGA penceresine geçilir.
+  * Gölge çerçeve tamponu (Windows 3.x 386 enhanced mod, 95/98/ME):
+    ekranın sistem belleğinde bir kopyası. Modern kartlarda görüntü
+    belleğinden PCI/AGP/PCIe üzerinden okumak çok yavaştır (önbelleksiz,
+    her erişim bir veri yolu gidiş-dönüşü); kaydırma, raster işlemleri ve
+    fare imleci kopyadan okur, yazma ikisine birden yapılır. Write
+    combining (WINVBE.386, PAT veya MTRR) işlemcinin çerçeve tamponu
+    yazmalarını toplu (burst) göndermesini sağlar. İkisi birlikte büyük
+    True Color modlarını (ör. 1920x1080x32) GeForce/Radeon kartlarda
+    hızlandırır.
+  * 256 renk (8 bit, palet), 32K (15 bit), 64K (16 bit), 16,7 milyon
+    (24 ve 32 bit) renk.
+  * BIOS'un sunduğu tüm çözünürlükler (640x480 ... 3840x2160 ve üstü,
+    4096x4096'ya kadar); Bochs/QEMU/VirtualBox kartlarında (DISPI) istenen
+    her çözünürlük.
+  * VMware SVGA II kartı (VMware, VirtualBox "VMSVGA", QEMU -vga vmware),
+    Windows 3.x (Windows 9x: SYSTEM.INI VMware=1): True Color'da (32 bit)
+    istenen her çözünürlük, ekrandan ekrana kopyalama ve düz dolgular
+    sunucu tarafından (2D hızlandırma), komut FIFO'su ile ekran güncelleme.
+  * Windows NT 4.0, 2000, XP ve XP x64'te DirectDraw: birincil yüzey,
+    video belleğinde sayfa çevirme (flip), ekran dışı yüzeyler, dikey
+    tarama boşluğu (oyunlar ve video oynatıcılar tam ekran exclusive modu
+    flip ile kullanır).
+  * 3D: Direct3D (DirectX 5-7 yazılım "RGB" aygıtı) video belleğindeki
+    flip zincirlerine çizer, OpenGL Microsoft'un yazılım OpenGL'i ile
+    çalışır (Windows NT 3.51 ve sonrası) - ikisi de işlemciyle hesaplanır;
+    donanım 3D'si yoktur (VBE'de yok, bkz. Bilinen sınırlamalar).
+  * Güç yönetimi, Windows 3.1/WfW ve 95/98/ME: WINVBE Power Saver ekran
+    koruyucusuyla VBE/PM (DPMS) üzerinden monitör bekleme ve kapatma
+    (Windows 95/98/ME'de Windows'un kendi enerji tasarrufu ayarlarıyla da);
+    askıya alma (APM veya ACPI) sonrası WINVBE.386 ve sürücü modu yeniden
+    kurar ve ekranı yeniden çizer. Bkz. "Güç yönetimi (Windows 3.x/9x/ME)".
+  * Güç yönetimi (Windows 2000, XP, Server 2003, x64): VBE/PM ile monitör
+    güç tasarrufu (DPMS bekleme, askı, kapalı), Bekleme/Uyku (S3) ve
+    Hazırda Bekletme (S4). Uyanınca WINVBE kartın PCI yazmaçlarını geri
+    yükler, kapanmışsa video BIOS'unu yeniden çalıştırır (POST) ve
+    Bochs/QEMU/VirtualBox kartlarında BIOS kullanılamıyorsa modu doğrudan
+    kurar.
+  * DCI birincil yüzeyi (DCI çalışma ortamlı Windows 3.1, Windows 95/98/
+    ME): Video for Windows ve diğer DCI istemcileri için çerçeve
+    tamponuna doğrudan erişim.
+  * EDID (VBE/DDC) ile monitör algılama: monitör adı, doğal çözünürlük ve
+    frekans aralığı; "Automatic" doğal çözünürlüğü seçer.
+  * VBE 3.0 BIOS'larda yenileme hızı ayarı: monitörün doğal zamanlaması
+    (EDID) ya da VESA CVT (CRT) veya CVT reduced blanking (LCD) ile
+    hesaplanan 56-120 Hz.
+  * Küçük (96 dpi) ve büyük (120 dpi) yazı tipleri; WINVBE kendi büyük
+    sistem yazı tiplerini (WVB*.FON) getirir, Windows'ta Microsoft'un 8514
+    yazı tipleri varsa onları kullanır.
+  * Hem Windows 3.0'da hem 3.1'de gök mavisi varsayılan renkler (Windows
+    3.x'in 256 renkli sürücülerindeki gibi; 3.1'de krem uygulama alanıyla);
+    klasik lacivert şema seçenek olarak mevcut. Windows 2.x kendi klasik
+    görünümünü (mavi başlık, camgöbeği menü çubuğu ve masaüstü), Windows
+    1.0x de kendisininkini (mavi başlık, sarı menü çubuğu, yeşil masaüstü)
+    alır; Microsoft'un EGA/VGA sürücülerindeki gibi seçili dosya siyah,
+    seçili menü öğesi kırmızı olur.
+  * Standard ve 386 enhanced modda tam ekran DOS oturumları.
+  * DIB'ler, büyütme/küçültme, palet, titreşimli (dither) fırçalar, kesikli
+    çizgiler, tüm Windows 3.0 yazı tipleriyle metin, yazılım imleci.
+  * VBE yoksa standart VGA 320x200x256 moduna düşer.
+
+Kurulum
+-------
+Yöntem 1 - DOS kurulum programı (önerilen; tüm Windows sürümleri, disket
+gerekmez)
+  WINVBE10 klasörünü sabit diske kopyalayın (ör. C:\WINVBE10), Windows'tan
+  çıkın ve şunu çalıştırın:
+      C:\WINVBE10\INSTALL
+  INSTALL sabit disklerdeki klasörlerde (tek seviye, ör. C:\WINDOWS,
+  C:\WIN30, D:\WIN31) Windows arar, bulduklarını (Windows 1.0x, 2.xx, 3.0,
+  3.1x, Windows for Workgroups 3.1x, 95/98/ME, NT) listeler ve hangisine
+  kurulacağını numarayla sorar; varsayılan C:\WINDOWS'tur. Numara yerine
+  başka bir dizin de yazılabilir (ör. E:\ESKI\WIN30). Windows sürümünü
+  kendisi tanır ve uygun klasörün dosyalarını kullanır: 1.x -> WIN1X, 2.x
+  -> WIN2X, 3.0 -> WIN30, 3.1 ve Windows for Workgroups 3.1/3.11 -> WIN31.
+  Nasıl: SYSTEM.INI varsa Windows 3.x, WIN200.BIN varsa 2.x, WIN100.BIN
+  varsa 1.x; 3.x'te SYSTEM\USER.EXE'nin sürümü (sürüm kaynağından, yoksa
+  dosya başlığındaki Windows sürümünden: 3.00 veya 3.10), Windows for
+  Workgroups için de SYSTEM\WFWNET.DRV'nin sürümü. Ardından kullanılabilir
+  modları ve monitör bilgilerini listeler; mod, yenileme hızı ve yazı tipi
+  boyutunu sorar. Sonra Windows'u WIN ile başlatın.
+
+  Soru sormadan kurulum:
+      INSTALL /W:1024 /H:768 /D:16 [/R:75] [/A:0|1|2] [/LARGE] [/DIR:C:\WIN30]
+      INSTALL /AUTO          otomatik (monitörün doğal) modu
+      INSTALL /LIST          yalnızca modları ve monitör bilgisini göster
+      INSTALL /VGA           Windows'u kendi orijinal sürücüsüne döndür
+
+  Windows 3.x: INSTALL, WINVBE.DRV'yi ve WVB yazı tiplerini SYSTEM
+    dizinine, WINVBECF.EXE'yi Windows dizinine kopyalar ve SYSTEM.INI'yi
+    günceller (orijinali bir kez SYSTEM.WVB olarak yedeklenir). Windows'ta
+    henüz olmayan VGA yazı tipleri ve grabber'lar (Windows başka bir ekran
+    için kurulmuşsa) WIN30/WIN31 klasöründen kopyalanır.
+  Windows 1.x/2.x: ekran sürücüsü, Windows Setup'ın oluşturduğu
+    WIN100.BIN/WIN200.BIN dosyasının parçasıdır. INSTALL, WINVBE.DRV'yi bu
+    dosyalara kendisi bağlar - Setup ve disket gerekmez -, WINVBECF.EXE'yi
+    Windows dizinine kopyalar ve ayarları WIN.INI [WINVBE] bölümüne yazar.
+    Son Windows Setup'ın dosyaları WIN100.BAK/.OBK veya WIN200.BAK/.OBK
+    olarak saklanır; INSTALL /VGA bunları geri koyar (orijinal EGA/VGA/
+    CGA... sürücüsü). Windows/386 2.x de aynı şekilde kurulur (WIN386 ile
+    başlatın).
+  Windows 3.x 386 enhanced mod: INSTALL ayrıca WINVBE.386'yı kopyalar ve
+    [386Enh] bölümüne device=winvbe.386 ekler. Bu yardımcı VxD, Bochs/
+    QEMU/VirtualBox (DISPI) ve VMware SVGA II modlarını tam ekran MS-DOS
+    kutuları için kapatır, Windows'a dönünce açar ve askıya alma sonrası
+    ekranı geri getirir (her kartta). INSTALL ayrıca WVBPOWER.SCR'yi
+    Windows dizinine kopyalar (Windows 3.1).
+  Video BIOS'unda monitör çözünürlüğü olmayan Intel tümleşik grafik (830 ...
+    G45, Atom): INSTALL 915PATCH'i de kurar (AUTOEXEC.BAT), bkz. "915PATCH"
+    - diğer PC'lerde kurmaz.
+  Windows NT: INSTALL NT dizinlerini ve NTVDM'yi reddeder; WINVBECF.EXE'yi
+    kullanın (bkz. "Windows NT").
+
+Windows 95, 98 ve ME
+  Sürücü Windows içinden Aygıt Yöneticisi ile kurulur (INSTALL bu
+  sürümlerde kurmayı reddeder ve bunu söyler):
+  1. Denetim Masası > Sistem > Aygıt Yöneticisi > Görüntü bağdaştırıcıları >
+     (bağdaştırıcınız, ör. Standard Display Adapter (VGA)) > Özellikler >
+     Sürücü > Sürücüyü Değiştir (98/ME: Sürücüyü Güncelleştir, tüm
+     sürücüleri listele ...) > Disketi Var, ve WIN9X klasörünü verin.
+  2. "WINVBE Universal VESA/VGA/SVGA" seçip bilgisayarı yeniden başlatın.
+  3. Çözünürlük ve renkler: Görüntü Özellikleri > Ayarlar (Windows,
+     WINVBE.INF'teki modları sunar; değişiklikten sonra yeniden başlatır)
+     ya da WINVBECF.EXE (Başlat > Çalıştır > winvbecf); WINVBECF ayrıca
+     yenileme hızını, bellek erişimini ve özel boyutları ayarlar ve
+     kartınızın modlarını Görüntü Özellikleri listesine yazar. İkisi aynı
+     ayarı yazar. Yazı tipi boyutu: Görüntü Özellikleri (Küçük / Büyük).
+  WINVBE bu sürümlerde Windows 3.1 tipi bir sürücüdür (DirectDraw HAL'i
+  yok - DirectDraw, WINVBE'nin DCI birincil yüzeyiyle emülasyonda çalışır;
+  çözünürlük yeniden başlatmadan değişmez). INF ayrıca WINVBE.386'yı kurar
+  ([386Enh] device=winvbe.386) ve video BIOS'u 915PATCH'in yamalayabildiği
+  Intel grafikte 915PATCH.VXD'yi (bkz. "915PATCH"). MS-DOS İstemi
+  pencerede ve tam ekranda çalışır: WINVBE ve WINVBE.386, DOS kutusunun
+  video BIOS çağrılarından sonra Windows'un modunu geri yükler; hem gerçek
+  kartlarda hem Bochs, QEMU ve VirtualBox kartlarında (Windows 9x'te VBE
+  modları için mini-VDD yoktur; Bilinen sınırlamalar'a bakın). Pencere
+  içindeki grafik programları yine doğru görünmeyebilir; tam ekran
+  çalıştırın.
+
+Yöntem 2 - Windows 3.x içinden
+  WINVBECF.EXE'yi WIN31 ya da WIN30 klasöründen çalıştırın (Program
+  Manager > File > Run), "Use WINVBE as the display driver" kutusunu
+  işaretleyin, ayarları seçip OK'e basın. Dosyalar kopyalanır ve Windows
+  yeniden başlar.
+
+Yöntem 3 - Windows Setup (OEMSETUP.INF), disket gerekmez
+  Windows 3.1: Windows dizininde DOS'tan SETUP'ı ya da Main grubundaki
+    Windows Setup > Options > Change System Settings'i çalıştırın. Display
+    -> "Other display (Requires disk from OEM)", yol: WIN31 klasörü (ör.
+    C:\WINVBE10\WIN31). Renk derinliği / yazı tipi boyutunu seçin. Setup'ın
+    istediği bütün dosyalar klasörde vardır; VDDVGA30.386 + WVB30.3GR'yi
+    (Windows 3.0 tipi ekran sürücüleri için VGA grabber çifti) kurar. DOS
+    Setup WIN.COM'u açılış logosu olmadan oluşturur (logo dosyalarını A:
+    sürücüsünde arardı).
+  Windows 3.0: "Other" seçeneği yalnızca DOS Setup'ta vardır (3.0'ın
+    Windows Setup'ı OEM ekran sürücüsü kuramaz). Windows dizininde SETUP'ı
+    çalıştırın, Display -> "Other (Requires disk provided by a hardware
+    manufacturer)", yol: WIN30 klasörü. Profiller: küçük veya büyük yazı
+    tipi. Windows 3.0 Setup ek ayar yazamadığı için çözünürlük ve renkleri
+    sonra WINVBECF.EXE ile seçin (WIN30 klasöründen bir kez çalıştırın;
+    kendini Windows dizinine kopyalar).
+
+Simge eklemek için: Program Manager > File > New > Program Item, komut
+satırı WINVBECF.EXE.
+
+Windows 2.x / Windows/386 - Windows Setup ile (isteğe bağlı)
+  Kolay yol INSTALL'dır. Setup'ın "Other" ekran seçeneğini kullanmak
+  isterseniz: Windows 2.x Setup disketinden SETUP'ı çalıştırın, "Other
+  (requires disk provided by a hardware manufacturer)" seçin ve
+  C:\WINVBE10\WIN2X yazın (klasörde WINVBE.DRV, WINVBE.LGO ve ekran
+  yakalayıcı WINVBE.GRB vardır). Windows/386 Setup ayrıca kendi
+  Windows/386'nızdaki WINVBE.3EX ve WINVBE.386'yı ister: WIN2X klasöründe
+  PREP2X C:\WIN386 (veya PREP2X A:) çalıştırın. Windows/386, CONFIG.SYS'te
+  DOS=HIGH olmamasını da ister.
+
+Windows 1.0x - Windows Setup ile (isteğe bağlı)
+  Kolay yol INSTALL'dır. Windows 1.0x Setup'ın ekran listesi sabittir,
+  "Other" seçeneği yoktur; PATCH1X, Setup ve Build disketlerinin
+  KOPYALARINDA WINVBE'yi "EGA (more than 64K) with Enhanced Color Display"
+  girişinin yerine koyar (her kopya için PATCH1X A:, sonra kopyalardan
+  SETUP).
+  MS-DOS 5 ve sonrasında Windows 1.0x, DOS eski bir sürüm bildirmedikçe
+  program başlatamaz: CONFIG.SYS'e DEVICE=C:\DOS\SETVER.EXE ekleyin ve bir
+  kez SETVER WIN100.BIN 3.30 çalıştırın (INSTALL bunu hatırlatır). Bu
+  Windows 1.0x'in bir özelliğidir, WINVBE ile ilgili değildir.
+  Windows 1.0x'in fare sürücüsü Microsoft seri ve bus fareleri destekler
+  (PS/2 fareleri desteklemez).
+
+Windows NT
+----------
+Windows NT için WINVBE, VBE modlarını video BIOS üzerinden (video port
+sürücüsünün Int 10h'si; x64 sürümü Windows XP/2003 x64'ün BIOS
+emülatörünü kullanır) kuran bir video miniport'u (WINVBE.SYS) ve doğrusal
+çerçeve tamponlu bir ekran sürücüsüdür (WINVBE.DLL). Sisteminize uygun
+klasörü kullanın:
+  NT\I386\NT3X     Windows NT 3.1, 3.5, 3.51 (WINVBE.DLL CSRSS'te çalışır)
+  NT\I386\NT4-XP   Windows NT 4.0, 2000, XP, Server 2003
+  NT\AMD64         Windows XP x64, Server 2003 x64
+Kurulum (Administrator olarak oturum açın):
+  * Tüm sürümler: klasördeki WINVBECF.EXE'yi çalıştırıp "Install driver"
+    düğmesine basın, sonra yeniden başlatın. Windows NT 3.x/4.0: WINVBECF
+    dosyaları kopyalar, winvbe servisini oluşturur (eski ekran servisi
+    kapatılır; NT 3.1'de WOW ve tam ekran DOS için VGA kalır) ve 800x600,
+    16 bit ayarlar. Windows 2000/XP/2003: WINVBECF, ekran bağdaştırıcısı
+    için WINVBE.INF'i kurar (Tak ve Kullan).
+  * Windows 2000/XP/2003, x64: ya da Aygıt Yöneticisi > Görüntü
+    bağdaştırıcıları > (bağdaştırıcı) > Sürücüyü Güncelleştir > Belirli
+    bir konumdan yükle > Arama > Disketi Var > klasör.
+  * Windows NT 4.0: ya da Denetim Masası > Görüntü > Ayarlar > Ekran Türü
+    > Değiştir > Disketi Var > NT\I386\NT4-XP.
+  * Windows NT 3.1: ya da Windows NT Setup > Options > Change System
+    Settings > Display > Other > NT\I386\NT3X (OEMSETUP.INF) ve bir
+    çözünürlük seçin. Windows NT 3.5/3.51: Denetim Masası > Display >
+    Change Display Type > Change > Other > NT\I386\NT3X.
+  WINVBECF modu değiştirdiğinde Windows NT 3.x Kurulumu'nun ekran
+  satırını da ("WINVBE VESA 1024 x 768, 16 bit ...") günceller.
+Ayarlar: WINVBECF.EXE (Windows dizinine kopyalanır) bağdaştırıcıyı ve
+monitörü gösterir, modları listeler; çözünürlüğü, renkleri ve yenileme
+hızını (NT 3.51 ve sonrasında hemen, NT 3.1/3.5'te yeniden başlatınca),
+8 bit DAC'ı, hata ayıklama günlüğünü, hangi yenileme hızlarının
+sunulacağını (monitör/EDID, tümü, 60 Hz) ve yerleşik 915 yamasını
+(915PATCH.EXE ile aynı komutlar; miniport her açılışta uygular) ayarlar.
+Görüntü denetim masası da çalışır.
+Modlar: 8, 15, 16, 24 ve 32 bit, doğrusal çerçeve tamponlu her VBE modu,
+VBE 3.0 ile yenileme hızları (EDID sınırları).
+DirectDraw (4.0/2000/XP/x64), Direct3D, OpenGL ve güç yönetimi: bkz.
+Özellikler. NT 3.x'te DirectDraw yoktur; OpenGL NT 3.51'de çalışır
+(Microsoft'un ya da Mesa'nın OPENGL32.DLL'i). WINVBECF'teki 915 patch
+kutusu yalnızca 915PATCH'in desteklediği Intel yonga setlerinde görünür;
+diğerlerinde üstteki kart bilgisinde "not supported" yazar.
+
+Ayar programı (WINVBECF.EXE)
+----------------------------
+  Graphics adapter and monitor   VBE sürümü, bellek, kart adı, EDID monitör
+                                 adı, türü, doğal modu ve frekans aralığı.
+  Screen resolution              Automatic (monitörün doğal modu), 320x200
+                                 VGA, tüm VBE çözünürlükleri; Bochs/QEMU/
+                                 VirtualBox'ta "Custom" (özel boyut).
+  Colors                         256 / 32K / 64K / 16M (24 bit) / 16M (32 bit)
+  Refresh                        BIOS varsayılanı, monitörün doğal hızı,
+                                 56..120 Hz (VBE 3.0 BIOS gerekir)
+  Monitor                        CRT (CVT) veya LCD (CVT reduced blanking)
+  Memory                         Otomatik / Linear (LFB) / VGA window
+  Font size                      Küçük (96 dpi) / Büyük (120 dpi)
+  Debug log                      sürücü günlüğü (E9h portu veya seri port)
+
+Windows 1.x/2.x'in kendi WINVBECF.EXE'si vardır (WIN1X/WIN2X
+klasörlerinde; INSTALL Windows dizinine kopyalar): yazı tipi boyutu ve
+doğrusal tampon dışında aynı ayarlar (Windows 1.x/2.x real modda çalışır),
+WIN.INI'ye kaydedilir. OK'den sonra Windows oturumunu kapatmayı önerir;
+yeni ayarlar Windows bir sonraki açılışında kullanılır. MS-DOS
+Executive'den çalıştırın.
+
+Büyük yazı tipleri, SYSTEM dizininde varsa Microsoft'un 8514SYS/8514FIX/
+8514OEM.FON dosyalarını, yoksa WINVBE'nin kendi WVBSYS/WVBFIX/WVBOEM.FON
+dosyalarını kullanır (INSTALL ve WINVBECF kopyalar); Windows disketleri
+gerekmez.
+
+Yenileme hızı ve monitör türü yalnızca VBE 3.0 BIOS'larda değiştirilebilir.
+VirtualBox, QEMU ve Bochs'un sanal ekran kartları VBE 2.0 bildirir (ya da
+CRTC zamanlamasını desteklemez); orada bu alanlar "Fixed (virtual)" /
+"Not used" gösterir - sanal ekranın yenileme hızını ana makine belirler.
+
+SYSTEM.INI ayarları ([WINVBE] bölümü)
+-------------------------------------
+(Windows 1.x/2.x: aynı anahtarlar WIN.INI'nin [WINVBE] bölümünde; DPI,
+Scheme ve LfbCheck/LfbAddr orada kullanılmaz.)
+  Width=1024        genişlik (0 = otomatik: EDID doğal veya 1024)
+  Height=768        yükseklik (0 = otomatik: EDID doğal veya 768)
+  Depth=16          8, 15, 16, 24 veya 32 (0 = otomatik = 16)
+  Mode=0            doğrudan VBE mod numarası, ör. 0x117; 0x13 = VGA 320x200
+  Refresh=0         0 = BIOS varsayılanı, 1 = monitörün doğal hızı (EDID),
+                    50..240 = Hz cinsinden yenileme hızı (VBE 3.0)
+  Timing=1          0 = CVT (CRT monitörler), 1 = CVT reduced blanking (LCD);
+                    varsayılan: dijital EDID monitörlerde 1, diğerlerinde 0
+  Access=0          0 = otomatik, 1 = yalnızca doğrusal tampon,
+                    2 = yalnızca A000h'deki VGA penceresi (64K bank'lar)
+  LfbCheck=1        LFB adresini kullanmadan önce doğrula (0 = BIOS'a güven)
+  LfbAddr=          LFB fiziksel adresini elle ver, ör. 0xE0000000
+                    (yalnızca yanlış adres bildiren BIOS'lar için)
+  Dispi=1           Bochs/QEMU/VirtualBox'ta özel çözünürlüklere izin ver
+  DPI=96            96 = küçük, 120 = büyük yazı tipleri; yoksa [boot]
+                    fonts.fon 8514SYS.FON ise 120, değilse 96
+  Scheme=0          varsayılan sistem renkleri: 0 = Windows sürümüne göre,
+                    1 = Windows 3.0 gök mavisi, 2 = Windows 3.1 gök mavisi
+                    (krem uygulama alanı), 3 = klasik lacivert;
+                    yalnızca WIN.INI [colors]'ta olmayan renkler için
+                    (Denetim Masası > Color bunları geçersiz kılar)
+  Dac8=1            256 renkli modlarda varsa 8 bitlik DAC'ı kullan
+  ShadowBuffer=1    ekranın sistem belleğindeki kopyası (386 enhanced mod,
+                    95/98/ME; 0 = yalnızca görüntü belleğine çiz)
+  WriteCombining=1  WINVBE.386 ile çerçeve tamponunda write combining
+  VddMode=          Windows 3.x tam ekran DOS: 1 = VDD sürücüye modu
+                    bırakmasını ve yeniden kurmasını bildirir (4001h/
+                    4002h); varsayılan: gerçek kartlarda 1, Bochs/QEMU/
+                    VirtualBox/VMware'de 0 (onları WINVBE.386 yönetir)
+  VgaReserve=1      görüntü belleğinin ilk 256 KB'ını (VGA metin ve yazı
+                    tipi düzlemleri) boş bırak: tam ekran MS-DOS pencereleri
+                    Alt+Tab sonrası yazı tiplerini korur (0 = ekran 0'dan
+                    başlar)
+  Forcevga=0        1 = her zaman VGA 320x200x256
+  Repost=1          uyanma sonrası mod kurulamazsa video BIOS'unu yeniden
+                    başlat (0 = asla)
+  VMware=1          VMware SVGA II kartı varsa kullan (True Color:
+                    Depth=24 veya 32); varsayılan 1, Windows 9x: 0
+  VMwareAccel=1     sunucu tarafında kopyalama/dolgu (0 = yalnızca CPU)
+  VMwareFifo=1      komut FIFO'su ve ekran güncelleme (0 = sunucu çerçeve
+                    tamponunu kendisi izler; hızlandırma yok)
+  Debug=0           0 = kapalı, 1 = günlük, 2 = ayrıntılı
+  DebugPort=0xE9    E9h (Bochs/QEMU hata ayıklama konsolu) veya COM portu,
+                    ör. 0x3F8
+
+Güç yönetimi (Windows 3.x/9x/ME)
+---------------------------------
+Monitör (DPMS): WVBPOWER.SCR, "WINVBE Power Saver", Windows 3.1 / Windows
+for Workgroups 3.1x için bir ekran koruyucudur (95/98/ME'de de
+kullanılabilir). INSTALL, Windows Setup (OEMSETUP.INF) ve Windows 9x
+INF'i kurar; Denetim Masası > Masaüstü > Ekran Koruyucu'dan seçilir
+(95/98/ME: Görüntü Özellikleri > Ekran Koruyucu). Başlayınca ekran
+kararır; Setup, monitörün kaç dakika sonra beklemeye geçeceğini ve
+kapanacağını ayarlar (varsayılan: hemen bekleme, 10 dakika sonra
+kapatma). Bir tuş veya fare hareketi monitörü yeniden açar. Setup, video
+BIOS'unun desteklediği durumları (VBE/PM) gösterir; "Test" monitörü 5
+saniye kapatır. Sürücü görüntüyü kendisi karartır (sequencer ve attribute
+controller) ve monitöre VBE/PM 4F10h ile sinyal verir; VBE/PM yoksa ekran
+yalnızca kararır. Programlar 7702h sürücü escape'ini (WINVBE_DPMS, WORD 0
+açık, 1 bekleme, 2 askı, 4 kapalı, FFFFh sorgu) kullanabilir.
+Windows 95/98/ME: Windows'un enerji tasarrufu ayarları (Görüntü
+Özellikleri > Ekran Koruyucu, Görüntü Türünü Değiştir'de "Monitor is
+Energy Star compliant"; 98/ME: Güç Yönetimi) WINVBE ile de çalışır -
+Windows ekranı tam ekran bir MS-DOS kutusundaki gibi devreden çıkarıp
+geri alır.
+Askıya alma / uyanma: WINVBE.386, Windows'un güç olaylarını alır (APM'li
+Windows 3.1 - POWER.DRV ve VPOWERD.386 - ve APM veya ACPI'li Windows
+95/98/ME). Askıdan önce Bochs/QEMU/VirtualBox ve VMware SVGA II durumunu
+not eder, uyanınca geri yükler ve Windows boşta kaldığında ekran
+sürücüsünden ekranı denetlemesini ister: kart modu kaybetmişse sürücü modu
+yeniden kurar (kurulamazsa video BIOS'unu bir kez daha başlatır,
+Repost=1) ve ekranı yeniden çizer. Pencerede çalışan MS-DOS kutularının
+BIOS verileri değişmeden kalır. Standard ve real mod Windows ile Windows
+3.0'da güç olayı yoktur: orada ekranı BIOS geri getirir (APM BIOS'ları
+genellikle bunu yapar).
+
+Donanım notları
+---------------
+  * Eski kartlar (S3 Trio32/64, Cirrus Logic, Tseng ET4000, Trident, ATI
+    Mach, Matrox ...): çoğunun ROM'unda VBE 1.2/2.0 vardır. VBE 1.2'de veya
+    LFB yoksa bank'lı pencere kullanılır. ROM'da VBE yoksa önce UniVBE ya da
+    S3VBE gibi bir VBE TSR'ı yükleyin.
+  * Yeni kartlar (AMD Radeon RX 7800, NVIDIA GeForce, Intel ...): sürücü
+    eski tip (legacy) video BIOS'a ihtiyaç duyar; firmware ayarlarından
+    CSM / Legacy boot'u açın. Yalnızca UEFI GOP sunan kart/anakartlarda VBE
+    yoktur ve hiçbir DOS/Windows 3.x VESA sürücüsü çalışamaz. Yeni
+    BIOS'ların çoğu yalnızca 32 bit, bazen 16 bit mod sunar; 8 bit mod
+    olmayabilir.
+  * "Above 4G decoding" / "Resizable BAR": Windows 3.x yalnızca 4 GB'ın
+    altındaki fiziksel belleğe erişebilir. Çerçeve tamponu 4 GB'ın üstüne
+    taşındıysa WINVBE bunu algılar ve A000h'deki VGA penceresini kullanır
+    (daha yavaş - her 64 KB'da BIOS üzerinden bank değişimi, write
+    combining yok - ama BIOS'un pencereden eriştirdiği her çözünürlükte
+    çalışır). Mümkünse tam hız için bu ayarları kapatın; CSM açıkken çoğu
+    anakart Resizable BAR'ı zaten devre dışı bırakır. WINVBECF hangisinin
+    kullanıldığını gösterir ("linear frame buffer + WC + shadow" / "VGA
+    window ...").
+  * BIOS varsayılanından farklı yenileme hızları, CRTC zamanlamalarını
+    destekleyen bir VBE 3.0 BIOS gerektirir. Hız değiştirildikten sonra
+    görüntü giderse DOS'tan INSTALL'ı çalıştırıp yenileme hızı olarak 0
+    seçin ya da Refresh=0 yazın.
+  * Real modda (WIN /R) ve Windows 1.x/2.x'te doğrusal tampon
+    kullanılamaz; otomatik olarak bank'lı pencere kullanılır, bu yüzden
+    BIOS'un bank'lı modları desteklemesi gerekir.
+  * Intel tümleşik grafiklerde (830 ... G45, Atom) dizüstü panellerinin ve
+    geniş monitörlerin doğal çözünürlüğü (ör. 1280x800, 1440x900,
+    1680x1050) çoğu zaman yoktur. 915PATCH bunu ekler, aşağıya bakın.
+
+Bilinen sınırlamalar
+--------------------
+  * Gerçek ekran kartlarında MS-DOS pencereleri: Windows'un standart VGA
+    sanal ekran aygıtı VBE modlarını tanımaz. WINVBE.386, tam ekrana geçen
+    pencerenin BIOS modunu yeniden kurar (ekran içeriği korunur); pencere
+    içindeki bir DOS programı BIOS ile video modu kurduğunda (modern video
+    BIOS'ları bunu doğrudan donanımda yapar) sürücü kendi modunu yeniden
+    kurar (ekran bir kez yanıp söner). Pencere içindeki grafik programları
+    yine doğru görünmeyebilir; tam ekran çalıştırın (Alt+Enter).
+  * Donanım hızlandırma yoktur (VMware SVGA II kartındaki kopyalama ve
+    dolgular hariç) ve fare imleci yazılımla çizilir; hız işlemciye ve
+    veri yoluna bağlıdır (yukarıdaki gölge çerçeve tamponuna bakın).
+    Windows NT doğrudan çerçeve tamponuna çizer (NT 4.0 ve sonrasında
+    write combining ile). 3D (Direct3D, OpenGL) işlemciyle hesaplanır:
+    VBE'de 3D yoktur, VMware SVGA3D arayüzü ise kendine ait eksiksiz bir
+    Direct3D/OpenGL donanım sürücüsü ister.
+  * Güç yönetimi: Windows NT 3.x/4.0'da ekran kartları için güç yönetimi
+    yoktur. Windows 3.0'da ekran koruyucu ve güç olayı yoktur. QEMU'nun
+    BIOS'u APM askıya almada bir şey yapmaz ve uyanma olayı bildirmez; bu
+    yüzden Windows 3.1/9x'in uyanma yolu benzetilmiş olaylarla (mod
+    kaybıyla da) test edildi; Windows 98/ME testler için yoktu. QEMU'da
+    Windows 2000 Bekleme'den (S3) uyanmadı (ekran sürücüsü yeniden
+    çağrılmadan önce duruyor); Hazırda Bekletme orada çalışır, XP x64
+    ikisinden de uyanır.
+  * QEMU'da Windows 3.x standard mod: var olan tam ekran bir DOS
+    programına geri dönmek boş ekran gösterebilir; Microsoft'un VGA.DRV'si
+    de orada aynı davranır (WINVBE'nin değil, emülatörün sorunu).
+  * QEMU'da VMware SVGA II moduyla (VMware=1) Windows 9x: SVGA çerçeve
+    tamponu VGA belleğini paylaştığı için tam ekran MS-DOS kutuları
+    bozulabilir; varsayılan (VBE/DISPI modu) bu sorunu yaşamaz.
+  * 16 renkli (4 bit düzlemsel) VBE modları desteklenmez; 16 renk için
+    Windows'un standart VGA sürücüsünü kullanın.
+  * Windows 3.0 256 renkte bazı Program Manager simgelerini soluk
+    renklerle gösterir; 16 renkli simgeleri Windows 3.0 kendisi dönüştürür
+    (Microsoft'un MCGA256 sürücüsünde de aynıdır). 15/16/24/32 bit
+    etkilenmez.
+
+  * Windows 1.x/2.x real modda çalışır: sürücü (tamponlarıyla yaklaşık
+    100 KB) geleneksel belleği kullanır; uygulamalara Microsoft'un EGA/VGA
+    sürücülerine göre daha az bellek kalır. 256 renkte sabit palet
+    kullanılır (6x6x6 renk küpü + griler); 2.x'in palet yöneticisi yoktur.
+  * Windows/386 2.x: pencere içindeki DOS programları doğru görünmez; tam
+    ekran çalıştırın (COMMANDF.PIF vb.). Windows/386 2.x ile SMARTDRV
+    (MS-DOS 5/6) yüklemeyin: büyük dosya kopyalarından sonra (ör.
+    INSTALL'ın ilk çalışması) Windows/386 "Internal stack overflow" ile
+    durabilir; yeniden başlatın.
+  * Windows 1.0 Developer Release 5 (1984) farklı bir sürücü arayüzü ve
+    modül biçimi kullanan bir ön sürümdür; desteklenmez.
+
+915PATCH - Intel tümleşik grafikler için çözünürlük
+---------------------------------------------------
+Intel 830, 845G, 852/855GM, 865G, 915G/GM, 945G/GM/GME, 946GZ, G965/Q965/
+GM965, G31/G33/Q33/Q35, GM45/G41/G43/G45/Q45/B43 ve Atom D4xx/D5xx/N4xx/
+N5xx grafiklerinin video BIOS'unda bir mod tablosu vardır. 915PATCH,
+Linux'taki 915resolution gibi bu tablonun girişlerini istediğiniz
+çözünürlükle değiştirir:
+    915PATCH /LIST                       yonga seti, BIOS türü, mod tablosu
+    915PATCH /AUTO                       monitörün doğal çözünürlüğü (EDID)
+    915PATCH /AUTO 1280 800              verilen çözünürlük
+    915PATCH 5C 1280 800 [32]            Intel 5Ch modunu değiştir
+    915PATCH /DUMP [dosya]               video BIOS'u kaydet (VBIOS.ROM)
+    915PATCH /CHECK                      çıktı yok; çıkış kodu 0 = bu PC'nin
+                                         video BIOS'u yamalanabilir
+    /LOG herhangi bir komutla            915PATCH.LOG'u 915PATCH.EXE'nin
+                                         yanına da yaz (/AUTO hep yazar,
+                                         /NOLOG: yazma);  /Q: ekrana yazma
+Tablo ve düzeni kendiliğinden bulunur; bloklar eşit aralıklı olmasa da
+(GM965 ve sonrası). Bir tablo yalnızca modları gerçekse kullanılır (8-32
+bit, 640x480/800x600/1024x768 var), BIOS'taki benzer baytlar asla
+yamalanmaz. GM45/GL40/GS45 (Cantiga) BIOS'ları zamanlamalarını her
+yenileme hızı için bir EDID ayrıntılı zamanlaması olarak tutar (tip 4):
+915PATCH yeni boyutu her birine 60, 75 ve 85 Hz GTF zamanlamalarıyla
+yazar; bu BIOS'ların çalışma zamanında doldurulan boş yuvaları (60h-71h
+modları) "(empty)" olarak gösterilir ve dokunulmaz. /TYPE:1 ... /TYPE:4
+düzeni zorlar (915resolution -t gibi). Bilinen bir tablo yoksa 915PATCH
+bunu söyler ve hiçbir şeyi değiştirmez; lütfen /DUMP ile alınan
+VBIOS.ROM'u bildirin.
+/AUTO; 8, 16 ve 32 bit için en büyük çözünürlüklü modu (genellikle
+gerekmeyen, ör. 1920x1440) değiştirir. Video BIOS gölge RAM'den (shadow
+RAM) çalıştığı için değişiklik bir sonraki yeniden başlatmaya kadar sürer:
+komutu Windows'tan önce, AUTOEXEC.BAT'a yazın. Başka donanımda (başka
+yonga setleri, ayrı ekran kartı, Core i grafikleri) 915PATCH hiçbir şeyi
+değiştirmez ve hata mesajıyla biter (çıkış kodu 2).
+
+Otomatik kurulum (yalnızca video BIOS'u 915PATCH'in yamalayabildiği
+PC'lerde; diğerlerinde bundan hiçbir şey kurulmaz):
+  * INSTALL (Windows 1.0x - 3.1x / WfW): 915PATCH /AUTO'yu hemen çalıştırır
+    (monitör çözünürlüğü böylece mod listesinde olur), 915PATCH.EXE'yi
+    Windows dizinine kopyalar ve AUTOEXEC.BAT'a "915PATCH.EXE /AUTO" ekler
+    (iletileri PC açılırken görünür); INSTALL /VGA satırı yeniden kaldırır.
+  * Windows 95/98/ME (Aygıt Yöneticisi, WINVBE.INF): yeniden başlatmadan
+    sonra WINVBECF /915 (RunOnce) SYSTEM.INI'ye device=915patch.vxd ekler
+    ve yeniden başlatmayı önerir; diğer PC'lerde 915PATCH.VXD'yi yeniden
+    siler. VxD her Windows açılışında /AUTO'yu sessizce çalıştırır.
+  * Windows NT: miniport BIOS'u kendisi yamalar (varsayılan /AUTO,
+    WINVBECF'teki "915 patch" kutusu), ileti göstermeden.
+  WINVBECF sonucu bağdaştırıcı kutusunda gösterir ("915 patch: ..."),
+  Windows 3.x/9x'te Windows dizinindeki 915PATCH.LOG'dan.
+
+915PATCH.VXD aynı işi Windows açılırken, ekran sürücüsü video BIOS'u
+kullanmadan önce yapar. MS-DOS modunda başlayamayan ve AUTOEXEC.BAT
+programlarını çalıştırmayan Windows ME için kullanın; Windows 95/98 ve
+386 genişletilmiş modda Windows 3.1/WfW 3.11 ile de çalışır.
+  1. 915PATCH.VXD'yi Windows'un SYSTEM klasörüne (C:\WINDOWS\SYSTEM)
+     kopyalayın.
+  2. SYSTEM.INI'de (C:\WINDOWS\SYSTEM.INI, ör. Başlat > Çalıştır > sysedit)
+     [386Enh] altına bir satır ekleyin:
+         device=915patch.vxd
+  3. İsteğe bağlı olarak 915PATCH.EXE ile aynı komutları içeren bir bölüm
+     (birden çok komut ; ile ayrılır). Bölüm yoksa VxD /AUTO çalıştırır:
+         [915PATCH]
+         Patch=/AUTO 1280 800
+  ya da  Patch=5C 1280 800 32; 5A 1280 800 16
+         Log=0          915PATCH.LOG yazılmaz
+  4. Yeniden başlatın. Windows klasöründeki 915PATCH.LOG yapılanı gösterir.
+     Windows 9x/ME'de çözünürlüğü sonra Görüntü Özellikleri'nden ya da
+     WINVBECF ile seçin.
+VxD, yamadan sonra kendini kaldırır (Windows'ta bellek kullanmaz).
+Kaldırmak için device=915patch.vxd satırını silin.
+
+Test programları (TEST klasörü)
+-------------------------------
+  DDTEST [g y bpp [saniye [1]]]   DirectDraw tam ekran: video belleğinde
+                                   flip zinciri, kilitler, dikey tarama,
+                                   palet (1 = 3D'ye uygun flip zinciri)
+  D3DTEST [g y bpp [saniye]]      Direct3D 7, video belleğindeki flip
+                                   zincirinde dönen üçgen (HAL ya da RGB)
+  GLTEST [saniye]                 OpenGL penceresi, dönen üçgen
+  DCITEST                         DCI birincil yüzeyi (Windows 9x)
+Her biri programın yanına bir rapor yazar (DDTEST.TXT vb.). Win32
+programlarıdır (Windows 95 ve NT 3.51 ve sonrası; DDTEST/D3DTEST DirectX
+ister, NT 4.0'da SP3 veya sonrası).
+
+Sorun giderme
+-------------
+  * Siyah veya bozuk ekran: Ctrl+Alt+Del ile çıkın ya da yeniden başlatın,
+    sonra DOS'tan INSTALL /VGA çalıştırarak VGA sürücüsüne (Windows
+    1.x/2.x'te orijinal sürücüye) dönün veya SYSTEM.INI'de [boot]
+    display.drv=vga.drv yazın.
+  * Access=2 (VGA penceresi), Refresh=0, daha düşük Depth veya Forcevga=1
+    deneyin.
+  * Debug=1, günlüğü E9h portuna (Bochs/QEMU: -debugcon file:log.txt) ya da
+    DebugPort ile verilen seri porta yazar.
+
+Test edilenler
+--------------
+QEMU (SeaBIOS VBE 3.0 / Bochs DISPI) üzerinde Windows 3.0 (Multimedia
+Extensions ile) real, standard ve 386 enhanced modlarda ve Windows 3.1 386
+enhanced modda: 8/15/16/24/32 bit, LFB ve bank'lı erişim, 320x200'den
+1600x1200'e ve özel DISPI boyutları, VBE 3.0 yenileme hızları, EDID, tam
+ekran DOS geçişi, ayar programı ve kurulum programları. Yanlış adres
+taklit edilerek LFB kontrolleri. WIN31/WIN30 klasörlerinden hiç disket
+olmadan Windows 3.1 Setup (DOS ve Windows modu) ve Windows 3.0 DOS Setup.
+Aygıt Yöneticisi ile kurulan Windows 95 (RTM): 8/16/24 bit, Görüntü
+Özellikleri ve WINVBECF ile mod değişikliği, Gezgin, Paint, pencerede ve
+tam ekranda MS-DOS İstemi.
+INSTALL ile ve kendi Setup'larıyla ("Other" ekran) kurulan Windows 2.03 ve
+Windows/386 2.11: 1280x800'e kadar 8/16/24/32 bit, menüler, Paint,
+Calculator, Reversi, tam ekran DOS oturumları, WINVBECF, INSTALL /VGA.
+INSTALL ile (EGA kurulumu WINVBE'ye çevrilerek) ve yamalı disket
+kopyalarından kurulan Windows 1.01: 1280x800'e kadar 8/16 bit, klavye,
+seri fare, Clock, WINVBECF. 915PATCH: dört tablo düzeninin hepsi için
+yapay BIOS görüntüleriyle birim testleri; bir GM45 dizüstünün gerçek video
+BIOS'u (boş yuvalı mod tablosu, EDID zamanlamaları, C000:B808'deki benzer
+baytlar); o GM45 tablosunu taşıyan test ROM'lu QEMU Q35: 915PATCH.EXE
+(gölge RAM kilidini açma, /LIST, /AUTO, mod değiştirme, /DUMP),
+915PATCH.VXD (Windows 3.1) ve Windows NT 3.51 miniport'u; desteklenmeyen
+donanımdaki hata yolları. Otomatik 915PATCH kurulumu: Windows 3.1'de
+INSTALL (Q35 test ROM'u: /AUTO, AUTOEXEC.BAT, günlük, WINVBECF satırı;
+Intel grafiği olmayan PC'de hiçbir şey; /VGA satırı kaldırır), Windows
+95'te WINVBECF /915 (ekleme ve yeniden başlatma, sessiz VxD, WINVBECF
+satırı; diğer PC'lerde silme). 915PATCH.VXD: test ROM'uyla Windows 95 ve
+Windows 3.1 (386 genişletilmiş mod) (EDID ve verilen çözünürlükle yama,
+SYSTEM.INI ayarları, günlük) ve desteklenmeyen donanımda.
+VMware SVGA II (QEMU -vga vmware): 1152x864x32'de sunucu kopyalama/
+dolgularıyla Windows 3.1, WINVBE.386 ile tam ekran DOS geçişleri;
+WINVBE.386 ile Windows 95 (DISPI ve SVGA II). DirectDraw: kendi test
+programımız (flip zinciri, kilitler, palet, dikey tarama) ile Windows 2000
+ve XP x64'te 8/16/32 bit; Windows 95'te DCIMAN32 ile DCI birincil yüzeyi.
+QEMU'da Windows NT: 3.1, 3.51, 4.0, 2000 ve XP x64 WINVBE ile çalıştı; NT
+4.0 ve Windows 2000'de WINVBECF "Install driver". DOS pencereleri: her
+Windows sürümünde (1.0x, 2.x, 3.0 real/standard/enhanced, 3.1, 95, NT 3.1,
+3.51, 4.0, 2000, XP x64) kısa bir MS-DOS penceresi / tam ekran (varsa) /
+geri dönüş testi. DirectDraw flip zincirleri NT 4.0, 2000 ve XP x64'te;
+Direct3D 7 (RGB aygıtı, video belleğinde flip) 2000 ve XP x64'te; OpenGL
+NT 3.51 (Mesa), NT 4.0, 2000 ve XP x64'te. Güç: Windows 2000 ve XP x64'te
+Hazırda Bekletme, XP x64'te BIOS yeniden POST ve PCI geri yüklemeli
+Bekleme (S3), monitör bekleme/kapatma (DPMS) ve uyandırma. Windows 3.1:
+WINVBE Power Saver (Denetim Masası, Setup, bekleme, kapatma, uyandırma),
+INSTALL ve Windows Setup ile kurulum; Windows 95: aynı ekran koruyucu,
+Windows'un kendi enerji tasarrufu (düşük güç bekleme, monitörü kapatma,
+uyandırma), APM Suspend, benzetilmiş olaylarla uyanma (mod korunmuş / mod
+kaybolmuş, pencerede MS-DOS kutusu açık), Windows 3.1'de de. Yeni
+WINVBE.386 ile Windows 3.0 386 enhanced mod.
+Gölge çerçeve tamponu ve write combining (PAT; sayfa tablosu girdileri
+QEMU'da denetlendi): LFB ve VGA penceresi modlarında Windows 95 ve 3.1,
+kaydırma, pencere taşıma, gölge üzerinden DCI. Gerçek karttaki gibi
+MS-DOS pencereleri (QEMU'da WINVBE.386'nın ve sürücünün Bochs/QEMU
+yardımı kapalı, modlar BIOS üzerinden): Windows 95'te pencere / tam ekran
+/ Alt+Tab / çıkış, Windows 3.1'de aynısı (VddMode otomatik). Windows 95
+stres testi (Gezgin görünümleri, Denetim Masası, Görüntü Özellikleri,
+Paint, Not Defteri, yardım, GDI ve DCI testleri, MS-DOS pencereleri; altı
+tur) - bu sürümde düzeltilen Gezgin çökmesini (bantlı GetDIBits) buldu,
+bir birim testi de bunu denetliyor. Windows NT 3.1 (Pentium'da) ve 3.51:
+WINVBECF ile ve OEMSETUP.INF ile (NT Setup / Display Type) kurulum,
+WINVBECF'in NT Setup ekran satırını güncellemesi, tam ekran konsol ve
+MS-DOS; NT 4.0 (DirectDraw), 2000, XP x64, Windows 1.01, 2.03, 3.0
+standard ve real modda gerileme testi.
+
+Kaynaktan derleme
+-----------------
+Open Watcom C 2.0, NASM ve Python 3 gerekir (imleçler, simgeler ve sistem
+bitmap'leri SRC\TOOLS\MKRES.PY, 1.x/2.x kaynakları MKRES2.PY, büyük yazı
+tipleri MKFON.PY ile üretilir; NEFIX.PY, 1.x/2.x sürücüsüne bu sürümlerin
+Setup programlarının beklediği modül düzenini verir; BINPATCH.PY,
+INSTALL'ın WIN100/WIN200.BIN'e yaptığı bağlamanın Python modelidir).
+    export WATCOM=/opt/watcom
+    sh build.sh
+WINVBE.386 NASM ile derlenir (SRC\VXD; LE dosyasını MKVXD32.PY yazar);
+Windows NT dosyaları mingw-w64 (i686 ve x86_64) ister ve SRC\NT\BUILD.SH
+ile derlenir.
+Çıktılar SRC\BIN dizinine yazılır; SRC\TOOLS\MKINF.PY OEMSETUP.INF
+dosyalarını üretir.
+
+WINVBE v1.0 - (c) 2026

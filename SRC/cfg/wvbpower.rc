@@ -1,0 +1,27 @@
+#include <windows.h>
+#include "wvbpower.h"
+
+IDI_APP ICON winvbecf.ico
+
+STRINGTABLE
+BEGIN
+    IDS_DESC "WINVBE Power Saver"
+END
+
+IDD_SETUP DIALOG 20, 20, 220, 118
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "WINVBE Power Saver Setup"
+FONT 8, "Helv"
+BEGIN
+    LTEXT           "When the screen saver starts, the screen goes black. Then the monitor saves power:", -1, 8, 6, 204, 18
+    CONTROL         "Stand by after", IDC_STBY, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 30, 64, 10
+    EDITTEXT        IDC_STBYMIN, 80, 28, 26, 12, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "minutes", -1, 110, 30, 40, 8
+    CONTROL         "Switch off after", IDC_OFF, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 12, 46, 64, 10
+    EDITTEXT        IDC_OFFMIN, 80, 44, 26, 12, ES_AUTOHSCROLL | WS_TABSTOP
+    LTEXT           "minutes", -1, 110, 46, 40, 8
+    LTEXT           "", IDC_STATUS, 8, 64, 204, 26
+    PUSHBUTTON      "&Test (5 s)", IDC_TEST, 8, 96, 50, 14
+    DEFPUSHBUTTON   "OK", IDOK, 106, 96, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 162, 96, 50, 14
+END

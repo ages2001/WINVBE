@@ -1,0 +1,22 @@
+#define IDD_MAIN        100
+#define IDD_ABOUT       101
+#define IDI_APP         1
+
+#define IDC_INFO        200
+#define IDC_MODES       201
+#define IDC_DEPTH       202
+#define IDC_CUSTW       203
+#define IDC_CUSTH       204
+#define IDC_REFRESH     205
+#define IDC_TIMING      206
+#define IDC_SMALL       207
+#define IDC_LARGE       208
+#define IDC_ACCESS      209
+#define IDC_DEBUG       210
+#define IDC_RESTART     211
+#define IDC_CURRENT     212
+#define IDC_ABOUT       213
+#define IDC_MONITOR     214
+#define IDC_CUSTOM      215
+#define IDC_ENABLE      216
+#define IDC_DETAILS     217

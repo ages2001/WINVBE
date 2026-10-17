@@ -1,0 +1,6 @@
+system windows
+option quiet
+option stack=8k
+option description 'SCRNSAVE : WINVBE Power Saver'
+name obj/wvbpower.scr
+file obj/wvbpower.obj
