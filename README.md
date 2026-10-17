@@ -13,9 +13,6 @@ VirtualBox and VMware.
 
 ![WINVBE on Windows 1.01, 2.03, 3.1, 95, NT 3.1 and XP x64](docs/images/overview.png)
 
-![Windows 1.0 - XP x64](https://img.shields.io/badge/Windows-1.01%20%E2%80%93%20XP%20x64-0078D6)
-![VBE 1.2 / 2.0 / 3.0](https://img.shields.io/badge/VBE-1.2%20%7C%202.0%20%7C%203.0-555)
-
 ---
 
 ## Contents
