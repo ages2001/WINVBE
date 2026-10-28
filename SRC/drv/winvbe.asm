@@ -167,7 +167,7 @@ center:
         pop     si
         ret
 
-msg     db      'WINVBE v1.0 - universal VESA/VGA/SVGA display driver',0
+msg     db      'WINVBE v1.1 - universal VESA/VGA/SVGA display driver',0
 
         align   2
 lgd:                                    ; the .LGD data follows here

@@ -63,3 +63,11 @@ int  svga_copy(SHORT sx, SHORT sy, SHORT dx, SHORT dy, SHORT w, SHORT h)
 { (void)sx; (void)sy; (void)dx; (void)dy; (void)w; (void)h; return 0; }
 int  svga_fill(DWORD color, SHORT x, SHORT y, SHORT w, SHORT h)
 { (void)color; (void)x; (void)y; (void)w; (void)h; return 0; }
+
+/* selector services (protected mode only; the host build runs as "real mode") */
+WORD sel_alloc(WORD n) { (void)n; return 0; }
+void sel_free(WORD s, WORD n) { (void)s; (void)n; }
+DWORD sel_getbase(WORD s) { (void)s; return 0; }
+int sel_setbase(WORD s, DWORD b) { (void)s; (void)b; return 0; }
+int sel_setlimit(WORD s, DWORD l) { (void)s; (void)l; return 0; }
+DWORD seg_limit(WORD s) { (void)s; return 0xFFFF; }

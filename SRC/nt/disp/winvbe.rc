@@ -14,8 +14,8 @@ BEGIN
 END
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION     1,0,0,0
-PRODUCTVERSION  1,0,0,0
+FILEVERSION     1,1,0,0
+PRODUCTVERSION  1,1,0,0
 FILEOS          VOS_NT_WINDOWS32
 FILETYPE        VFT_DRV
 FILESUBTYPE     VFT2_DRV_DISPLAY
@@ -26,11 +26,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName",      "WINVBE\0"
             VALUE "FileDescription",  "WINVBE VESA display driver\0"
-            VALUE "FileVersion",      "1.0\0"
+            VALUE "FileVersion",      "1.1\0"
             VALUE "InternalName",     "winvbe.dll\0"
             VALUE "OriginalFilename", "winvbe.dll\0"
             VALUE "ProductName",      "WINVBE\0"
-            VALUE "ProductVersion",   "1.0\0"
+            VALUE "ProductVersion",   "1.1\0"
         END
     END
     BLOCK "VarFileInfo"

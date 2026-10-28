@@ -3,7 +3,12 @@
  *
  * A linear frame buffer driver: GDI draws into the frame buffer itself
  * (engine managed bitmap), the miniport sets the VBE mode and maps the
- * frame buffer.  Built twice for x86:
+ * frame buffer.  Modes without a usable linear frame buffer (VBE 1.2,
+ * ISA/VL-Bus cards) are banked: GDI draws into a copy of the screen in
+ * system memory (a device managed surface whose drawing functions are
+ * passed on to the engine with the copy), and every change is copied
+ * through the 64K VGA window at A000h, which the miniport moves with VBE
+ * function 4F05h.  Built twice for x86:
  *   - NT3X: Windows NT 3.1/3.5/3.51, runs in user mode inside CSRSS, the
  *     GDI engine is WINSRV.DLL, the miniport is called with DeviceIoControl;
  *   - otherwise Windows NT 4.0, 2000, XP, 2003 (kernel mode, WIN32K.SYS);
@@ -92,6 +97,16 @@ typedef struct {
     ULONG    start;             /* display start (DirectDraw flip) */
     PALETTEENTRY *pal;          /* 256 entries in 8 bpp */
     HSURF    pat[HS_DDI_MAX];   /* standard hatch patterns */
+    /* banked modes */
+    ULONG    banked;
+    ULONG    gran, winsz;       /* window granularity and size (bytes) */
+    ULONG    Bpp;
+    ULONG    pos;               /* current window position, -1 = unknown */
+    BYTE    *win;               /* the mapped VGA window */
+    BYTE    *shadow;            /* copy of the screen (system memory) */
+    LONG     sstride;
+    HSURF    hbm;               /* engine bitmap over shadow */
+    SURFOBJ *pso;               /* ... locked */
 } PDEV;
 
 /* standard hatch patterns, 8x8 1 bpp (0 = line, 1 = gap), DWORD rows */
@@ -302,6 +317,13 @@ DHPDEV APIENTRY DrvEnablePDEV(DEVMODEW *pdm, LPWSTR logaddr, ULONG cPat, HSURF *
     pd->stride = v->ScreenStride;
     pd->rmask = v->RedMask; pd->gmask = v->GreenMask; pd->bmask = v->BlueMask;
     pd->dacbits = v->NumberRedBits;
+    pd->Bpp = (pd->bpp + 7) / 8;
+    if ((v->AttributeFlags & VIDEO_MODE_BANKED) && (v->DriverSpecificAttributeFlags & WVB_BANKED_FLAG)) {
+        pd->banked = 1;
+        pd->gran = (v->DriverSpecificAttributeFlags & 0xFFFF) << 10;
+        pd->winsz = ((v->DriverSpecificAttributeFlags >> 16) & 0x7FFF) << 10;
+        if (!pd->gran || !pd->winsz) pd->gran = pd->winsz = 0x10000;
+    }
     mem_free(modes);
 #ifdef FBCALLS
     { VIDEO_COLOR_CAPABILITIES cc; VIDEO_POINTER_CAPABILITIES pc; ULONG r;
@@ -450,6 +472,10 @@ static BOOL set_mode(PDEV *pd)
     return TRUE;
 }
 
+static HSURF banked_surface(PDEV *pd, PVOID win);
+static void banked_free(PDEV *pd);
+static void flush_rect(PDEV *pd, LONG l, LONG t, LONG r, LONG b);
+
 HSURF APIENTRY DrvEnableSurface(DHPDEV dhpdev)
 {
     PDEV *pd = (PDEV *)dhpdev;
@@ -463,6 +489,7 @@ HSURF APIENTRY DrvEnableSurface(DHPDEV dhpdev)
     vm.RequestedVirtualAddress = NULL;
     if (ioctl(pd->hDriver, IOCTL_VIDEO_MAP_VIDEO_MEMORY, &vm, sizeof(vm), &mi, sizeof(mi), &ret))
         return NULL;
+    if (pd->banked) return banked_surface(pd, mi.FrameBufferBase);
     pd->fb = mi.FrameBufferBase;
     pd->vram = mi.VideoRamLength;
     pd->start = 0;
@@ -471,11 +498,7 @@ HSURF APIENTRY DrvEnableSurface(DHPDEV dhpdev)
     fmt = pd->bpp == 8 ? BMF_8BPP : pd->bpp == 16 ? BMF_16BPP : pd->bpp == 24 ? BMF_24BPP : BMF_32BPP;
     hs = (HSURF)EngCreateBitmap(sz, pd->stride, fmt, BMF_TOPDOWN, pd->fb);
     if (!hs) goto fail;
-#ifdef HOOKTEST
-    if (!EngAssociateSurface(hs, pd->hdev, HOOK_BITBLT | HOOK_TEXTOUT | HOOK_COPYBITS | HOOK_STROKEPATH | HOOK_PAINT)) { EngDeleteSurface(hs); goto fail; }
-#else
     if (!EngAssociateSurface(hs, pd->hdev, 0)) { EngDeleteSurface(hs); goto fail; }
-#endif
     pd->hsurf = hs;
     if (pd->bpp == 8) load_palette(pd, 0, 256);
 #ifdef TEST_FILL
@@ -498,6 +521,7 @@ VOID APIENTRY DrvDisableSurface(DHPDEV dhpdev)
     TRACE(("DisableSurface\n"));
     if (pd->hsurf) EngDeleteSurface(pd->hsurf);
     pd->hsurf = NULL;
+    if (pd->banked) banked_free(pd);
     if (pd->fb) {
         vm.RequestedVirtualAddress = pd->fb;
         ioctl(pd->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY, &vm, sizeof(vm), NULL, 0, &ret);
@@ -513,6 +537,10 @@ BOOL APIENTRY DrvAssertMode(DHPDEV dhpdev, BOOL enable)
     if (enable) {
         if (!set_mode(pd)) return FALSE;
         if (pd->bpp == 8) load_palette(pd, 0, 256);
+        if (pd->banked && pd->pso) {
+            pd->pos = (ULONG)-1;
+            flush_rect(pd, 0, 0, (LONG)pd->w, (LONG)pd->h);
+        }
         return TRUE;
     }
     return !ioctl(pd->hDriver, IOCTL_VIDEO_RESET_DEVICE, NULL, 0, NULL, 0, &ret);
@@ -562,54 +590,239 @@ ULONG APIENTRY DrvGetModes(HANDLE hDriver, ULONG cjSize, DEVMODEW *pdm)
     return out * dmsz;
 }
 
-#ifdef HOOKTEST
-static ULONG nblt, ntxt, ncpy, nmisc;
-static void trace_clip(CLIPOBJ *co)
+
+/* ------------------------------------------------------------------ */
+/* banked modes: a copy of the screen in system memory                 */
+
+static void set_pos(PDEV *pd, ULONG pos)
 {
-    struct { ULONG c; RECTL arcl[8]; } er;
-    BOOL more;
-    if (!co || co->iDComplexity != DC_COMPLEX) return;
-    CLIPOBJ_cEnumStart(co, FALSE, CT_RECTANGLES, CD_ANY, 0);
-    do {
-        ULONG i;
-        more = CLIPOBJ_bEnum(co, sizeof(er), (ULONG *)&er);
-        for (i = 0; i < er.c; i++)
-            TRACE(("  clip %u,%u-%u,%u\n", er.arcl[i].left, er.arcl[i].top, er.arcl[i].right, er.arcl[i].bottom));
-    } while (more);
+    ULONG r;
+    if (pos == pd->pos) return;
+    pd->pos = ioctl(pd->hDriver, IOCTL_WVB_SET_BANK, &pos, sizeof(pos), NULL, 0, &r) ? (ULONG)-1 : pos;
 }
+
+static void copy_out(BYTE *d, const BYTE *s, ULONG n)
+{
+    while (n && ((ULONG_PTR)d & 3)) { *d++ = *s++; n--; }
+    while (n >= 4) { *(volatile ULONG *)d = *(const ULONG *)s; d += 4; s += 4; n -= 4; }
+    while (n--) *d++ = *s++;
+}
+
+/* copies a rectangle of the shadow to video memory */
+static void flush_rect(PDEV *pd, LONG l, LONG t, LONG r, LONG b)
+{
+    LONG y;
+    if (l < 0) l = 0;
+    if (t < 0) t = 0;
+    if (r > (LONG)pd->w) r = (LONG)pd->w;
+    if (b > (LONG)pd->h) b = (LONG)pd->h;
+    if (l >= r || t >= b || !pd->win || !pd->shadow) return;
+    for (y = t; y < b; y++) {
+        ULONG off = (ULONG)y * (ULONG)pd->stride + (ULONG)l * pd->Bpp;
+        ULONG n = (ULONG)(r - l) * pd->Bpp;
+        const BYTE *src = pd->shadow + (ULONG)y * (ULONG)pd->sstride + (ULONG)l * pd->Bpp;
+        while (n) {
+            ULONG base = pd->pos * pd->gran, chunk;
+            if (pd->pos == (ULONG)-1 || off < base || off >= base + pd->winsz) {
+                set_pos(pd, off / pd->gran);
+                if (pd->pos == (ULONG)-1) return;
+                base = pd->pos * pd->gran;
+            }
+            chunk = base + pd->winsz - off;
+            if (chunk > n) chunk = n;
+            copy_out(pd->win + (off - base), src, chunk);
+            off += chunk; src += chunk; n -= chunk;
+        }
+    }
+}
+
+/* the part of rc inside the clipping */
+static void flush(PDEV *pd, const RECTL *rc, CLIPOBJ *co)
+{
+    RECTL x = *rc;
+    if (x.left > x.right) { LONG t = x.left; x.left = x.right; x.right = t; }
+    if (x.top > x.bottom) { LONG t = x.top; x.top = x.bottom; x.bottom = t; }
+    if (co && co->iDComplexity != DC_TRIVIAL) {
+        if (x.left < co->rclBounds.left) x.left = co->rclBounds.left;
+        if (x.top < co->rclBounds.top) x.top = co->rclBounds.top;
+        if (x.right > co->rclBounds.right) x.right = co->rclBounds.right;
+        if (x.bottom > co->rclBounds.bottom) x.bottom = co->rclBounds.bottom;
+    }
+    flush_rect(pd, x.left, x.top, x.right, x.bottom);
+}
+
+static void flush_path(PDEV *pd, PATHOBJ *po, CLIPOBJ *co, LONG extra)
+{
+    RECTFX b;
+    RECTL r;
+    PATHOBJ_vGetBounds(po, &b);
+    r.left = (b.xLeft >> 4) - 1 - extra;
+    r.top = (b.yTop >> 4) - 1 - extra;
+    r.right = ((b.xRight + 15) >> 4) + 2 + extra;
+    r.bottom = ((b.yBottom + 15) >> 4) + 2 + extra;
+    flush(pd, &r, co);
+}
+
+/* our device surface -> the shadow bitmap; NULL for other surfaces */
+static PDEV *devpd(SURFOBJ *so)
+{
+    return so && so->iType == STYPE_DEVICE && so->dhsurf ? (PDEV *)so->dhsurf : NULL;
+}
+
+static SURFOBJ *punt(SURFOBJ *so)
+{
+    PDEV *pd = devpd(so);
+    return pd ? pd->pso : so;
+}
+
+static void banked_free(PDEV *pd)
+{
+    VIDEO_MEMORY vm;
+    ULONG ret;
+    if (pd->pso) EngUnlockSurface(pd->pso);
+    pd->pso = NULL;
+    if (pd->hbm) EngDeleteSurface(pd->hbm);
+    pd->hbm = NULL;
+    mem_free(pd->shadow);
+    pd->shadow = NULL;
+    if (pd->win) {
+        vm.RequestedVirtualAddress = pd->win;
+        ioctl(pd->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY, &vm, sizeof(vm), NULL, 0, &ret);
+        pd->win = NULL;
+    }
+}
+
+static HSURF banked_surface(PDEV *pd, PVOID win)
+{
+    SIZEL sz;
+    ULONG fmt = pd->bpp == 8 ? BMF_8BPP : pd->bpp == 16 ? BMF_16BPP : pd->bpp == 24 ? BMF_24BPP : BMF_32BPP;
+    HSURF hs;
+    pd->win = win;
+    pd->pos = (ULONG)-1;
+    pd->vram = 0;
+    sz.cx = pd->w;
+    sz.cy = pd->h;
+    pd->sstride = (LONG)((pd->w * pd->Bpp + 3) & ~3UL);
+    pd->shadow = mem_alloc((ULONG)pd->sstride * pd->h);
+    if (!pd->shadow) goto fail;
+    pd->hbm = (HSURF)EngCreateBitmap(sz, pd->sstride, fmt, BMF_TOPDOWN, pd->shadow);
+    if (!pd->hbm || !EngAssociateSurface(pd->hbm, pd->hdev, 0)) goto fail;
+    pd->pso = EngLockSurface(pd->hbm);
+    if (!pd->pso) goto fail;
+    hs = EngCreateDeviceSurface((DHSURF)pd, sz, fmt);
+    if (!hs) goto fail;
+    if (!EngAssociateSurface(hs, pd->hdev, HOOK_BITBLT | HOOK_COPYBITS | HOOK_STRETCHBLT | HOOK_TEXTOUT |
+                             HOOK_STROKEPATH | HOOK_FILLPATH | HOOK_STROKEANDFILLPATH | HOOK_PAINT)) {
+        EngDeleteSurface(hs);
+        goto fail;
+    }
+    pd->hsurf = hs;
+    if (pd->bpp == 8) load_palette(pd, 0, 256);
+    flush_rect(pd, 0, 0, (LONG)pd->w, (LONG)pd->h);
+    TRACE(("EnableSurface banked: window %x gran %x size %x shadow %x\n", (ULONG)(ULONG_PTR)win, pd->gran,
+           pd->winsz, (ULONG)(ULONG_PTR)pd->shadow));
+    return hs;
+fail:
+    banked_free(pd);
+    return NULL;
+}
+
 BOOL APIENTRY DrvBitBlt(SURFOBJ *dst, SURFOBJ *src, SURFOBJ *msk, CLIPOBJ *co, XLATEOBJ *xo, RECTL *rd,
                         POINTL *ps, POINTL *pm, BRUSHOBJ *bo, POINTL *pb, ROP4 rop)
 {
-    if (nblt++ < 60) {
-        TRACE(("BitBlt pid %u rop %x dst %u,%u-%u,%u dc %u\n", 0UL, rop,
-               rd->left, rd->top, rd->right, rd->bottom, co ? co->iDComplexity : 9));
-        trace_clip(co);
-    }
-    return EngBitBlt(dst, src, msk, co, xo, rd, ps, pm, bo, pb, rop);
+    PDEV *pd = devpd(dst);
+    BOOL ok = EngBitBlt(punt(dst), punt(src), msk, co, xo, rd, ps, pm, bo, pb, rop);
+    if (pd) flush(pd, rd, co);
+    return ok;
 }
+
+BOOL APIENTRY DrvCopyBits(SURFOBJ *dst, SURFOBJ *src, CLIPOBJ *co, XLATEOBJ *xo, RECTL *rd, POINTL *ps)
+{
+    PDEV *pd = devpd(dst);
+    BOOL ok = EngCopyBits(punt(dst), punt(src), co, xo, rd, ps);
+    if (pd) flush(pd, rd, co);
+    return ok;
+}
+
+BOOL APIENTRY DrvStretchBlt(SURFOBJ *dst, SURFOBJ *src, SURFOBJ *msk, CLIPOBJ *co, XLATEOBJ *xo,
+                            COLORADJUSTMENT *ca, POINTL *pht, RECTL *rd, RECTL *rs, POINTL *pm, ULONG mode)
+{
+    PDEV *pd = devpd(dst);
+    BOOL ok = EngStretchBlt(punt(dst), punt(src), msk, co, xo, ca, pht, rd, rs, pm, mode);
+    if (pd) flush(pd, rd, co);
+    return ok;
+}
+
 BOOL APIENTRY DrvTextOut(SURFOBJ *so, STROBJ *str, FONTOBJ *fo, CLIPOBJ *co, RECTL *rx, RECTL *ro,
                          BRUSHOBJ *bf, BRUSHOBJ *bo, POINTL *po, MIX mix)
 {
-    if (ntxt++ < 40) TRACE(("TextOut pid %u %u,%u\n", 0UL, str->rclBkGround.left, str->rclBkGround.top));
-    return EngTextOut(so, str, fo, co, rx, ro, bf, bo, po, mix);
+    PDEV *pd = devpd(so);
+    BOOL ok = EngTextOut(punt(so), str, fo, co, rx, ro, bf, bo, po, mix);
+    if (pd) {
+        RECTL r = str->rclBkGround;
+        if (ro) {
+            if (ro->left < r.left) r.left = ro->left;
+            if (ro->top < r.top) r.top = ro->top;
+            if (ro->right > r.right) r.right = ro->right;
+            if (ro->bottom > r.bottom) r.bottom = ro->bottom;
+        }
+        if (rx)             /* underline / strike out: up to a null rectangle */
+            for (; rx->left || rx->top || rx->right || rx->bottom; rx++) {
+                if (rx->left < r.left) r.left = rx->left;
+                if (rx->top < r.top) r.top = rx->top;
+                if (rx->right > r.right) r.right = rx->right;
+                if (rx->bottom > r.bottom) r.bottom = rx->bottom;
+            }
+        flush(pd, &r, co);
+    }
+    return ok;
 }
-BOOL APIENTRY DrvCopyBits(SURFOBJ *dst, SURFOBJ *src, CLIPOBJ *co, XLATEOBJ *xo, RECTL *rd, POINTL *ps)
+
+/* geometric (wide) lines: their width is not known here without floating
+   point - the clip bounds, or the whole screen */
+static LONG line_extra(LINEATTRS *la)
 {
-    if (ncpy++ < 60) TRACE(("CopyBits pid %u dst %u,%u-%u,%u\n", 0UL, rd->left, rd->top, rd->right, rd->bottom));
-    return EngCopyBits(dst, src, co, xo, rd, ps);
+    return la && (la->fl & LA_GEOMETRIC) ? 0x4000 : 1;
 }
+
 BOOL APIENTRY DrvStrokePath(SURFOBJ *so, PATHOBJ *po, CLIPOBJ *co, XFORMOBJ *xo, BRUSHOBJ *bo, POINTL *pb,
                             LINEATTRS *la, MIX mix)
 {
-    if (nmisc++ < 40) TRACE(("StrokePath pid %u\n", 0UL));
-    return EngStrokePath(so, po, co, xo, bo, pb, la, mix);
+    PDEV *pd = devpd(so);
+    BOOL ok = EngStrokePath(punt(so), po, co, xo, bo, pb, la, mix);
+    if (pd) flush_path(pd, po, co, line_extra(la));
+    return ok;
 }
+
+BOOL APIENTRY DrvFillPath(SURFOBJ *so, PATHOBJ *po, CLIPOBJ *co, BRUSHOBJ *bo, POINTL *pb, MIX mix, FLONG fl)
+{
+    PDEV *pd = devpd(so);
+    BOOL ok = EngFillPath(punt(so), po, co, bo, pb, mix, fl);
+    if (pd) flush_path(pd, po, co, 1);
+    return ok;
+}
+
+BOOL APIENTRY DrvStrokeAndFillPath(SURFOBJ *so, PATHOBJ *po, CLIPOBJ *co, XFORMOBJ *xo, BRUSHOBJ *bs,
+                                   LINEATTRS *la, BRUSHOBJ *bf, POINTL *pb, MIX mix, FLONG fl)
+{
+    PDEV *pd = devpd(so);
+    BOOL ok = EngStrokeAndFillPath(punt(so), po, co, xo, bs, la, bf, pb, mix, fl);
+    if (pd) flush_path(pd, po, co, line_extra(la));
+    return ok;
+}
+
 BOOL APIENTRY DrvPaint(SURFOBJ *so, CLIPOBJ *co, BRUSHOBJ *bo, POINTL *pb, MIX mix)
 {
-    if (nmisc++ < 40) TRACE(("Paint pid %u\n", 0UL));
-    return EngPaint(so, co, bo, pb, mix);
+    PDEV *pd = devpd(so);
+    BOOL ok = EngPaint(punt(so), co, bo, pb, mix);
+    if (pd) {
+        if (co && co->iDComplexity != DC_TRIVIAL)
+            flush_rect(pd, co->rclBounds.left, co->rclBounds.top, co->rclBounds.right, co->rclBounds.bottom);
+        else
+            flush_rect(pd, 0, 0, (LONG)pd->w, (LONG)pd->h);
+    }
+    return ok;
 }
-#endif
 
 /* the pointer is drawn by GDI (simulated pointer) */
 ULONG APIENTRY DrvSetPointerShape(SURFOBJ *pso, SURFOBJ *psoMask, SURFOBJ *psoColor, XLATEOBJ *pxlo,
@@ -747,7 +960,7 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *phi, DWORD *pdwNum
     DDNTCORECAPS *c = &h.ddCaps;
 
     TRACE(("GetDirectDrawInfo vram %x heap lines %u list %x\n", pd->vram, lines, (ULONG)(ULONG_PTR)pvmList));
-    if (!pd->fb) return FALSE;
+    if (!pd->fb || pd->banked) return FALSE;
     *pdwNumFourCC = 0;
     *pdwNumHeaps = lines ? 1 : 0;
     if (pvmList && lines) {
@@ -828,13 +1041,15 @@ static DRVFN fns[] = {
     { INDEX_DrvDisableSurface,  (PFN)DrvDisableSurface },
     { INDEX_DrvAssertMode,      (PFN)DrvAssertMode },
     { INDEX_DrvSetPalette,      (PFN)DrvSetPalette },
-#ifdef HOOKTEST
+    /* banked modes only (the hooks of the device surface) */
     { INDEX_DrvBitBlt,          (PFN)DrvBitBlt },
-    { INDEX_DrvTextOut,         (PFN)DrvTextOut },
     { INDEX_DrvCopyBits,        (PFN)DrvCopyBits },
+    { INDEX_DrvStretchBlt,      (PFN)DrvStretchBlt },
+    { INDEX_DrvTextOut,         (PFN)DrvTextOut },
     { INDEX_DrvStrokePath,      (PFN)DrvStrokePath },
+    { INDEX_DrvFillPath,        (PFN)DrvFillPath },
+    { INDEX_DrvStrokeAndFillPath, (PFN)DrvStrokeAndFillPath },
     { INDEX_DrvPaint,           (PFN)DrvPaint },
-#endif
 #ifndef NOPTR
     { INDEX_DrvSetPointerShape, (PFN)DrvSetPointerShape },
     { INDEX_DrvMovePointer,     (PFN)DrvMovePointer },

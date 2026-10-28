@@ -1,4 +1,4 @@
-WINVBE v1.0 - Windows 1.0-XP için evrensel VESA/VGA/SVGA ekran sürücüsü
+WINVBE v1.1 - Windows 1.0-XP için evrensel VESA/VGA/SVGA ekran sürücüsü
 ========================================================================
 (Bu dosya UTF-8 kodlamasındadır.)
 
@@ -52,6 +52,52 @@ Dosyalar
   Microsoft dosyaları (yazı tipleri, ekran yakalayıcılar, VDDVGA30.386,
   WIN.CNF) bulunur. Bunlar Microsoft Windows'a aittir ve yalnızca kendi
   lisanslı Windows kopyanızla kullanım içindir; başkalarına dağıtmayın.
+  Aynısı sürücülerin içindeki standart Windows bitmap, imleç ve
+  simgeleri için de geçerlidir (bkz. "Özellikler").
+
+v1.1'deki yenilikler
+--------------------
+  * Her sürümde standart Windows fare imleçleri, simgeleri ve pencere
+    bitmap'leri: her sürücü, o Windows'un kendi Microsoft VGA sürücüsündeki
+    kaynakları taşır (1.01, 2.x, 3.0, 3.1, NT 3.x); Windows 9x sürücüsünde
+    hiç yoktur, böylece Windows 95/98/ME, Microsoft'un sürücülerinde olduğu
+    gibi kendi kaynaklarını kullanır. WIN30 ve WIN31 artık ayrı WINVBE.DRV
+    dosyalarına sahip. NT 4.0 ve sonrası zaten sistemin kendilerini
+    kullanıyordu.
+  * NT 3.1: varsayılan renkler ve renk iletişim kutusu tablosu NT 3.1'in
+    VGA sürücüsündekilerdir.
+  * Windows NT: kullanılabilir doğrusal çerçeve tamponu olmayan kartlar
+    (VBE 1.2, ISA/VL-Bus kartlar, 86Box/PCem'in öykündüğü birçok kart)
+    çalışır: A000h'deki bank'lı VGA penceresi, sistem belleğindeki bir
+    ekran kopyasıyla kullanılır. Hiç VBE grafik modu yoksa WINVBE VGA
+    320x200x256 ile açılır - önceden kartta LFB modu yoksa Windows NT
+    açılışta "The required system file is bad or missing" ile duruyordu.
+  * Windows NT: WINVBECF "Install driver" CD'den yapılınca sonraki sefer
+    başarısız oluyordu ("Cannot copy WINVBE.DLL", NT Setup: "Unable to do
+    the specified file copy operation"): CD'den kopyalanan dosyalar salt
+    okunurdur. Kopyalar artık yazılabilir yapılır (var olan salt okunur
+    olanlar da), kullanımdaki dosya için geçici ad geçerli bir 8.3 adıdır
+    (NT 3.1 FAT).
+  * Windows 3.x 386 enhanced mod: güncel ekran kartlarında (ör. GeForce
+    RTX, Radeon RX 7000) Windows logoda kalıyordu: standart VDD, video
+    BIOS'unun kartla konuştuğu CRTC registerlerini sanallaştırır.
+    WINVBE.386 artık Windows'un video BIOS çağrılarının CRTC ve durum
+    registerlerine doğrudan ulaşmasını sağlar; BIOS'a ayrıca kendine ait
+    8 KB'lık bir real mode yığını verilir.
+  * Windows 9x: GDI'ın bantlar halinde dönüştürdüğü Win32 programlarının
+    büyük DIB'leri her bantta siyah bir çizgiyle çiziliyordu; tek büyük
+    (32 bit) segmentteki bellek bitmap'leri ve DIB verileri doğru
+    adreslenir.
+  * Windows 98/95/ME (GitHub issue #1): ConText ve NetMeter gibi Delphi
+    programları 32 bit renkte açılırken duruyordu ("Bu program geçersiz bir
+    işlem yaptı", 0EEDFADEh istisnası). GDI, ekranın kendi biçimindeki bir
+    DIB'i (32 bit ekranda 32 bit) sürücüye dönüştürmeden verir; WINVBE bunu
+    reddettiği için SetDIBits ve CreateDIBitmap başarısız oluyor, Delphi
+    programlarının açılışta yüklediği image list'ler (araç çubuğu
+    resimleri) de yüklenemiyordu. 16 ve 32 bit DIB'ler (BI_RGB ve
+    BI_BITFIELDS) artık SetDIBits, GetDIBits, SetDIBitsToDevice ve
+    StretchDIBits'te destekleniyor; GetDIBits 2048 pikselden geniş
+    bitmap'lerde de çalışıyor.
 
 Özellikler
 ----------
@@ -109,6 +155,11 @@ Dosyalar
   * Küçük (96 dpi) ve büyük (120 dpi) yazı tipleri; WINVBE kendi büyük
     sistem yazı tiplerini (WVB*.FON) getirir, Windows'ta Microsoft'un 8514
     yazı tipleri varsa onları kullanır.
+  * Her Windows sürümünün kendi VGA sürücüsünden alınan standart bitmap'ler
+    (pencere düğmeleri, kaydırma çubuğu okları, onay kutuları), fare
+    imleçleri ve ileti kutusu simgeleri: Windows 1.01 (EGA), 2.x, 3.0, 3.1
+    ve NT 3.x; Windows 95/98/ME ile NT 4.0 ve sonrası yerleşik olanları
+    kullanır.
   * Hem Windows 3.0'da hem 3.1'de gök mavisi varsayılan renkler (Windows
     3.x'in 256 renkli sürücülerindeki gibi; 3.1'de krem uygulama alanıyla);
     klasik lacivert şema seçenek olarak mevcut. Windows 2.x kendi klasik
@@ -125,9 +176,9 @@ Kurulum
 -------
 Yöntem 1 - DOS kurulum programı (önerilen; tüm Windows sürümleri, disket
 gerekmez)
-  WINVBE10 klasörünü sabit diske kopyalayın (ör. C:\WINVBE10), Windows'tan
+  WINVBE11 klasörünü sabit diske kopyalayın (ör. C:\WINVBE11), Windows'tan
   çıkın ve şunu çalıştırın:
-      C:\WINVBE10\INSTALL
+      C:\WINVBE11\INSTALL
   INSTALL sabit disklerdeki klasörlerde (tek seviye, ör. C:\WINDOWS,
   C:\WIN30, D:\WIN31) Windows arar, bulduklarını (Windows 1.0x, 2.xx, 3.0,
   3.1x, Windows for Workgroups 3.1x, 95/98/ME, NT) listeler ve hangisine
@@ -209,7 +260,7 @@ Yöntem 3 - Windows Setup (OEMSETUP.INF), disket gerekmez
   Windows 3.1: Windows dizininde DOS'tan SETUP'ı ya da Main grubundaki
     Windows Setup > Options > Change System Settings'i çalıştırın. Display
     -> "Other display (Requires disk from OEM)", yol: WIN31 klasörü (ör.
-    C:\WINVBE10\WIN31). Renk derinliği / yazı tipi boyutunu seçin. Setup'ın
+    C:\WINVBE11\WIN31). Renk derinliği / yazı tipi boyutunu seçin. Setup'ın
     istediği bütün dosyalar klasörde vardır; VDDVGA30.386 + WVB30.3GR'yi
     (Windows 3.0 tipi ekran sürücüleri için VGA grabber çifti) kurar. DOS
     Setup WIN.COM'u açılış logosu olmadan oluşturur (logo dosyalarını A:
@@ -229,7 +280,7 @@ Windows 2.x / Windows/386 - Windows Setup ile (isteğe bağlı)
   Kolay yol INSTALL'dır. Setup'ın "Other" ekran seçeneğini kullanmak
   isterseniz: Windows 2.x Setup disketinden SETUP'ı çalıştırın, "Other
   (requires disk provided by a hardware manufacturer)" seçin ve
-  C:\WINVBE10\WIN2X yazın (klasörde WINVBE.DRV, WINVBE.LGO ve ekran
+  C:\WINVBE11\WIN2X yazın (klasörde WINVBE.DRV, WINVBE.LGO ve ekran
   yakalayıcı WINVBE.GRB vardır). Windows/386 Setup ayrıca kendi
   Windows/386'nızdaki WINVBE.3EX ve WINVBE.386'yı ister: WIN2X klasöründe
   PREP2X C:\WIN386 (veya PREP2X A:) çalıştırın. Windows/386, CONFIG.SYS'te
@@ -252,8 +303,11 @@ Windows NT
 ----------
 Windows NT için WINVBE, VBE modlarını video BIOS üzerinden (video port
 sürücüsünün Int 10h'si; x64 sürümü Windows XP/2003 x64'ün BIOS
-emülatörünü kullanır) kuran bir video miniport'u (WINVBE.SYS) ve doğrusal
-çerçeve tamponlu bir ekran sürücüsüdür (WINVBE.DLL). Sisteminize uygun
+emülatörünü kullanır) kuran bir video miniport'u (WINVBE.SYS) ve bir
+çerçeve tamponu ekran sürücüsüdür (WINVBE.DLL). Kullanılabilir doğrusal
+çerçeve tamponu olmayan kartlar A000h'deki bank'lı VGA penceresini
+kullanır (daha yavaş; DirectDraw yok); hiç VBE grafik modu yoksa WINVBE,
+Windows yine de açılsın diye VGA 320x200x256 kullanır. Sisteminize uygun
 klasörü kullanın:
   NT\I386\NT3X     Windows NT 3.1, 3.5, 3.51 (WINVBE.DLL CSRSS'te çalışır)
   NT\I386\NT4-XP   Windows NT 4.0, 2000, XP, Server 2003
@@ -283,8 +337,11 @@ hızını (NT 3.51 ve sonrasında hemen, NT 3.1/3.5'te yeniden başlatınca),
 sunulacağını (monitör/EDID, tümü, 60 Hz) ve yerleşik 915 yamasını
 (915PATCH.EXE ile aynı komutlar; miniport her açılışta uygular) ayarlar.
 Görüntü denetim masası da çalışır.
-Modlar: 8, 15, 16, 24 ve 32 bit, doğrusal çerçeve tamponlu her VBE modu,
-VBE 3.0 ile yenileme hızları (EDID sınırları).
+Modlar: 8, 15, 16, 24 ve 32 bit, her VBE modu (doğrusal çerçeve tamponu,
+yoksa VGA penceresi), VBE 3.0 ile yenileme hızları (EDID sınırları).
+Registry değeri WinVbe.Access (DWORD, aygıt anahtarında, ör.
+Services\winvbe\Device0): 0 otomatik, 1 yalnız doğrusal çerçeve
+tamponu, 2 yalnız VGA penceresi.
 DirectDraw (4.0/2000/XP/x64), Direct3D, OpenGL ve güç yönetimi: bkz.
 Özellikler. NT 3.x'te DirectDraw yoktur; OpenGL NT 3.51'de çalışır
 (Microsoft'un ya da Mesa'nın OPENGL32.DLL'i). WINVBECF'teki 915 patch
@@ -437,6 +494,11 @@ Donanım notları
 
 Bilinen sınırlamalar
 --------------------
+  * Windows 9x'te 32 bit renk: GDI'ın kendisi (sürücü değil) genişliği
+    2048 pikselin katı olan ya da yaklaşık 16 MB'tan büyük (ör. 2560x1600)
+    aygıta bağımlı bitmap oluşturamaz. Ekran boyutunda bitmap oluşturan
+    programlar 2048x1536x32 ve 2560x1600x32'de başarısız olabilir; bu
+    çözünürlüklerde 24 ya da 16 bit kullanın.
   * Gerçek ekran kartlarında MS-DOS pencereleri: Windows'un standart VGA
     sanal ekran aygıtı VBE modlarını tanımaz. WINVBE.386, tam ekrana geçen
     pencerenin BIOS modunu yeniden kurar (ekran içeriği korunur); pencere
@@ -564,6 +626,17 @@ Test programları (TEST klasörü)
                                    zincirinde dönen üçgen (HAL ya da RGB)
   GLTEST [saniye]                 OpenGL penceresi, dönen üçgen
   DCITEST                         DCI birincil yüzeyi (Windows 9x)
+  W32GDI [tur]                    uygulamaların yaptığı gibi Win32 GDI
+                                  çizimi (DIB section, GetDIBits, image
+                                  list, simge, kalem, bölge, yazı tipi,
+                                  SetDIBits/GetDIBits gidiş-dönüş);
+                                  çökme sonrası W32GDI.TXT son adımı verir,
+                                  sonunda başarısız kontrol sayısı yazar
+  DBGRUN program.exe [arg]        bir programı Win32 hata ayıklayıcısı
+                                  altında çalıştırır; yüklediği DLL'leri ve
+                                  istisnalarını (Delphi istisnalarının
+                                  sınıfı ve mesajıyla) DBGRUN.TXT'ye yazar -
+                                  açılmayan programları bildirmek için
 Her biri programın yanına bir rapor yazar (DDTEST.TXT vb.). Win32
 programlarıdır (Windows 95 ve NT 3.51 ve sonrası; DDTEST/D3DTEST DirectX
 ister, NT 4.0'da SP3 veya sonrası).
@@ -578,9 +651,21 @@ Sorun giderme
     deneyin.
   * Debug=1, günlüğü E9h portuna (Bochs/QEMU: -debugcon file:log.txt) ya da
     DebugPort ile verilen seri porta yazar.
+  * Bir Win32 programı açılırken hata veriyor ya da çöküyorsa (Windows 9x):
+    programı TEST\DBGRUN.EXE ile çalıştırın, TEST\W32GDI.EXE'yi de
+    çalıştırıp DBGRUN.TXT ve W32GDI.TXT'yi bildirime ekleyin.
 
 Test edilenler
 --------------
+v1.1: standart bitmap, imleç ve simgeler (ileti kutuları, pencere
+düğmeleri, kaydırma çubukları, I-imleci) Windows 1.01, 2.03, 3.0, 3.1, 95,
+NT 3.1 ve NT 3.51'de denetlendi; sürücülerdeki kaynaklar Microsoft'un
+sürücülerindekilerle bayt bayt karşılaştırıldı. NT bank'lı modlar (LFB
+kapatılarak) NT 3.1, 4.0 ve XP x64'te, VGA 320x200 yedeği NT 3.1'de.
+CRTC tuzaklarının kaldırılması gerçek donanım benzetiminde Windows 3.1'de,
+tam ekran ve pencereli MS-DOS kutularıyla. Win32 GDI testi (TEST\W32GDI.EXE:
+her biçimde DIB section, GetDIBits, image list, simge, kalem, bölge, yazı
+tipi) Windows 95'te 8, 16, 24 ve 32 bpp'de.
 QEMU (SeaBIOS VBE 3.0 / Bochs DISPI) üzerinde Windows 3.0 (Multimedia
 Extensions ile) real, standard ve 386 enhanced modlarda ve Windows 3.1 386
 enhanced modda: 8/15/16/24/32 bit, LFB ve bank'lı erişim, 320x200'den
@@ -591,6 +676,13 @@ olmadan Windows 3.1 Setup (DOS ve Windows modu) ve Windows 3.0 DOS Setup.
 Aygıt Yöneticisi ile kurulan Windows 95 (RTM): 8/16/24 bit, Görüntü
 Özellikleri ve WINVBECF ile mod değişikliği, Gezgin, Paint, pencerede ve
 tam ekranda MS-DOS İstemi.
+Aygıt Yöneticisi ile (Disketi Var) kurulan Windows 98 SE: 8/16/24/32 bit,
+800x600 - 2560x1440; 1.0'da ve ilk 1.1 derlemesinde başarısız olan ConText
+(Delphi) 1920x1080x32'de (issue #1); araç çubuğu verisinin ImageList_Read
+ile okunması ve her ekran derinliğinde 16/24/32 bit DIB'lerle (BI_RGB ve
+BI_BITFIELDS, 7 - 2500 piksel genişlik) SetDIBits/GetDIBits gidiş-dönüş
+testleri; W32GDI.EXE (gerçek donanım benzetiminde de, DISPI olmadan);
+pencerede ve tam ekranda MS-DOS İstemi; WINVBECF.
 INSTALL ile ve kendi Setup'larıyla ("Other" ekran) kurulan Windows 2.03 ve
 Windows/386 2.11: 1280x800'e kadar 8/16/24/32 bit, menüler, Paint,
 Calculator, Reversi, tam ekran DOS oturumları, WINVBECF, INSTALL /VGA.
@@ -646,11 +738,21 @@ standard ve real modda gerileme testi.
 
 Kaynaktan derleme
 -----------------
-Open Watcom C 2.0, NASM ve Python 3 gerekir (imleçler, simgeler ve sistem
-bitmap'leri SRC\TOOLS\MKRES.PY, 1.x/2.x kaynakları MKRES2.PY, büyük yazı
-tipleri MKFON.PY ile üretilir; NEFIX.PY, 1.x/2.x sürücüsüne bu sürümlerin
+Open Watcom C 2.0, NASM ve Python 3 gerekir. Standart bitmap, imleç ve
+simgeler derleme sırasında SRC\TOOLS\STOCKRES.PY ile Microsoft'un ekran
+sürücülerinden alınır; bu dosyalar kaynak koda dahil değildir ve
+build.sh'nin yanındaki msfiles/stock klasörüne (Windows disketlerinizden;
+adlarda büyük/küçük harf önemlidir) konmalıdır:
+    VGA30.DRV    Windows 3.0'ın VGA.DRV'si
+    VGA31.DRV    Windows 3.1'in VGA.DRV'si
+    VGA211.DRV   Windows 2.11'in VGA.DRV'si (IBM PS/2, "VGA450")
+    EGA101.DRV   Windows 1.01'in EGAHIRES.DRV'si
+    VGANT31.DLL  Windows NT 3.1'in VGA.DLL'si
+Bunlar yoksa sürücüler WINVBE'nin kendi çizimlerini alır (MKRES.PY,
+1.x/2.x için MKRES2.PY). OEM tabloları MKRES.PY ve MKRES2.PY, büyük yazı
+tipleri MKFON.PY ile üretilir. NEFIX.PY, 1.x/2.x sürücüsüne bu sürümlerin
 Setup programlarının beklediği modül düzenini verir; BINPATCH.PY,
-INSTALL'ın WIN100/WIN200.BIN'e yaptığı bağlamanın Python modelidir).
+INSTALL'ın WIN100/WIN200.BIN'e yaptığı bağlamanın Python modelidir.
     export WATCOM=/opt/watcom
     sh build.sh
 WINVBE.386 NASM ile derlenir (SRC\VXD; LE dosyasını MKVXD32.PY yazar);
@@ -659,4 +761,4 @@ ile derlenir.
 Çıktılar SRC\BIN dizinine yazılır; SRC\TOOLS\MKINF.PY OEMSETUP.INF
 dosyalarını üretir.
 
-WINVBE v1.0 - (c) 2026
+WINVBE v1.1 - (c) 2026

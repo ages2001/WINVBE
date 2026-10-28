@@ -52,7 +52,9 @@ done
 # display driver for NT 3.x (user mode in CSRSS, GDI engine in WINSRV.DLL)
 i686-w64-mingw32-gcc $KFLAGS -D_X86_=1 -march=i386 -mtune=i686 -DNT3X -c disp/winvbe.c -o $O/i386/disp3.o
 python3 ../tools/mkres.py ../res >/dev/null
-i686-w64-mingw32-windres --include-dir ../res disp/winvbe3.rc -o $O/i386/disp3rc.o
+# NT 3.1 VGA.DLL bitmaps, cursors, icons and colours (tools/stockres.py)
+python3 ../tools/stockres.py nt3 ../msfiles/stock/VGANT31.DLL ../res $O/res3
+i686-w64-mingw32-windres --include-dir $O/res3 disp/winvbe3.rc -o $O/i386/disp3rc.o
 i686-w64-mingw32-ld -T $O/i386.x --subsystem native -e _DrvEnableDriver@12 -shared --image-base 0x6F000000 \
     --file-alignment 0x200 --section-alignment 0x1000 \
     --major-os-version 1 --minor-os-version 0 --major-subsystem-version 1 --minor-subsystem-version 0 \

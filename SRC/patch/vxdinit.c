@@ -204,7 +204,7 @@ void vxd_main(unsigned envseg)
 
     if (!env_windir(*(unsigned __far *)MK_FP(psp, 0x2C)) && !env_windir(envseg))
         strcpy(windir, "C:\\WINDOWS");
-    say("915PATCH.VXD - WINVBE v1.0 video BIOS mode patcher for Intel graphics\n\n");
+    say("915PATCH.VXD - WINVBE v1.1 video BIOS mode patcher for Intel graphics\n\n");
     read_ini();
     say("Patch=%s\n", patch);
     for (cmd = patch; cmd; ) {

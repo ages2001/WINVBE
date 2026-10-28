@@ -44,7 +44,7 @@ FONT 8, "Helv"
 BEGIN
     ICON            IDI_APP, -1, 10, 10, 18, 20
     LTEXT           "WINVBE Universal VESA/VGA/SVGA Display Driver", -1, 40, 10, 190, 9
-    LTEXT           "Version 1.0", -1, 40, 21, 190, 9
+    LTEXT           "Version 1.1", -1, 40, 21, 190, 9
     LTEXT           "For Windows 3.0, 3.1, Windows for Workgroups 3.1x and Windows 95, 98 and ME.", -1, 40, 36, 190, 18
     LTEXT           "VBE 1.2 - 3.0 BIOSes with linear or banked frame buffers, 8/15/16/24/32 bits per pixel, EDID monitor detection, VBE 3.0 refresh rates and custom resolutions on Bochs, QEMU and VirtualBox.", -1, 40, 56, 190, 36
     LTEXT           "Large fonts: glyphs derived from DejaVu (Bitstream Vera licence).", -1, 40, 94, 190, 18

@@ -34,7 +34,7 @@ IDD_ABOUT DIALOG 30, 24, 236, 118
 STYLE WS_POPUP | WS_DLGFRAME
 BEGIN
     CTEXT           "WINVBE Universal VESA/VGA/SVGA Display Driver", -1, 4, 8, 228, 9
-    CTEXT           "Version 1.0 for Windows 1.x and 2.x", -1, 4, 19, 228, 9
+    CTEXT           "Version 1.1 for Windows 1.x and 2.x", -1, 4, 19, 228, 9
     LTEXT           "VBE 1.2 - 3.0 BIOSes through the VGA window at A000h, 8/15/16/24/32 bits per pixel, EDID monitor detection, VBE 3.0 refresh rates and custom resolutions on Bochs, QEMU and VirtualBox.", -1, 10, 34, 216, 44
     LTEXT           "To remove WINVBE run INSTALL /VGA from DOS.", -1, 10, 80, 216, 9
     DEFPUSHBUTTON   "OK", IDOK, 93, 98, 50, 14

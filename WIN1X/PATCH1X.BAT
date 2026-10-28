@@ -1,5 +1,5 @@
 @ECHO OFF
-REM WINVBE v1.0 - put the WINVBE driver on COPIES of the Windows 1.0x disks
+REM WINVBE v1.1 - put the WINVBE driver on COPIES of the Windows 1.0x disks
 REM
 REM Windows 1.0x Setup has no "Other display" choice, so WINVBE takes the
 REM place of "EGA (more than 64K) with Enhanced Color Display":

@@ -1,5 +1,5 @@
 @ECHO OFF
-REM WINVBE v1.0 - prepare this folder for Windows 2.x Setup ("Other" display)
+REM WINVBE v1.1 - prepare this folder for Windows 2.x Setup ("Other" display)
 REM
 REM   PREP2X C:\WINDOWS     copy from an installed Windows 2.x (installed with
 REM                         an EGA or VGA display) or Windows/386 2.x

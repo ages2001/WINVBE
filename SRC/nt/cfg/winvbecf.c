@@ -452,13 +452,35 @@ static int file_has(const char *fn, const char *what)
     return found;
 }
 
-/* copy, or replace at the next restart when the target is in use */
+/* CopyFile keeps the attributes of the source: files copied from a CD are
+   read-only, and a read-only driver file can then not be replaced later -
+   neither by WINVBECF nor by NT Setup (OEMSETUP.INF) */
+static int copy_rw(const char *src, const char *dst)
+{
+    SetFileAttributesA(dst, FILE_ATTRIBUTE_NORMAL);
+    if (!CopyFileA(src, dst, FALSE)) return 0;
+    SetFileAttributesA(dst, FILE_ATTRIBUTE_NORMAL);
+    return 1;
+}
+
+/* copy, or replace at the next restart when the target is in use; the
+   temporary name is a valid 8.3 name (NT 3.1 FAT has no long names):
+   winvbe.dll -> winvbe.~dl */
 static int put_file(const char *src, const char *dst)
 {
     char tmp[MAX_PATH];
-    if (CopyFileA(src, dst, FALSE)) return 1;
-    scpy(tmp, dst, sizeof(tmp)); scat(tmp, ".new", sizeof(tmp));
-    if (!CopyFileA(src, tmp, FALSE)) return 0;
+    int i, dot = -1;
+    if (copy_rw(src, dst)) return 1;
+    scpy(tmp, dst, sizeof(tmp));
+    for (i = 0; tmp[i]; i++)
+        if (tmp[i] == '.') dot = i;
+        else if (tmp[i] == '\\') dot = -1;
+    if (dot < 0 || dot + 3 >= MAX_PATH) return 0;
+    tmp[dot + 1] = '~';
+    tmp[dot + 2] = dst[dot + 1] ? dst[dot + 1] : '_';
+    tmp[dot + 3] = dst[dot + 1] && dst[dot + 2] ? dst[dot + 2] : '_';
+    tmp[dot + 4] = 0;
+    if (!copy_rw(src, tmp)) return 0;
     return MoveFileExA(tmp, dst, MOVEFILE_REPLACE_EXISTING | MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
 }
 
@@ -563,11 +585,11 @@ static void nt3_copy_inf(void)
     for (i = 0; i < 100; i++) {
         wsprintfA(dst, "%s\\OEMVIO%d.INF", sys, i);
         if (GetFileAttributesA(dst) == 0xFFFFFFFF) { if (free_n < 0) free_n = i; continue; }
-        if (file_has(dst, "WINVBE") == 1) { CopyFileA(src, dst, FALSE); return; }
+        if (file_has(dst, "WINVBE") == 1) { copy_rw(src, dst); return; }
     }
     if (free_n < 0) return;
     wsprintfA(dst, "%s\\OEMVIO%d.INF", sys, free_n);
-    CopyFileA(src, dst, FALSE);
+    copy_rw(src, dst);
 }
 
 static int install_nt3_4(HWND d)

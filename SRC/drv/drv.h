@@ -469,6 +469,8 @@ typedef struct {
     WORD  sel, off;     /* memory bitmap base */
     WORD  scanseg;      /* scans per segment (0: unlimited) */
     WORD  seginc;
+    DWORD flat;         /* > 64 KB in one (32-bit) segment: linear base */
+    WORD  rsel;         /* ... and a selector for its rows */
 } SURF;
 
 /* row buffers */
@@ -567,6 +569,7 @@ void hw_restore_state(void);
 WORD sel_alloc(WORD count);
 void sel_free(WORD sel, WORD count);
 int  sel_setbase(WORD sel, DWORD base);
+DWORD sel_getbase(WORD sel);
 int  sel_setlimit(WORD sel, DWORD limit);
 DWORD map_phys(DWORD phys, DWORD size);
 

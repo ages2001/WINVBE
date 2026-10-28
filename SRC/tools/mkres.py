@@ -3,6 +3,9 @@
 WINVBE resource generator: draws all OEM bitmaps, cursors and icons used by
 USER from scratch (original artwork) and writes .bmp/.cur/.ico files plus the
 .rc script.  Sizes follow the Windows 3.x display driver resource layout.
+The release drivers use the standard Windows ones instead (stockres.py); this
+artwork is the fallback when msfiles/stock is missing.  The OEM tables
+(oem*.bin, nametab.bin, nt*.bin) are always used.
 """
 import os, struct, sys, math
 

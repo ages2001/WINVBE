@@ -2,13 +2,18 @@
  * WINVBE - device independent bitmaps:
  *   DeviceBitmapBits (Get/SetDIBits), DIBToDevice (SetDIBitsToDevice),
  *   CreateBitmap (not used).
- * Supports 1/4/8/24 bpp DIBs, BI_RLE8 and BI_RLE4 on input.
+ * Supports 1/4/8/16/24/32 bpp DIBs (16/32: BI_RGB and BI_BITFIELDS), BI_RLE8
+ * and BI_RLE4 on input.  Windows 9x GDI hands a DIB in the format of the
+ * screen (16 bpp on a 16 bpp screen, 32 on 32) to the driver unconverted;
+ * SetDIBits of a 32 bpp DIB failed on a 32 bpp screen, which made Delphi
+ * programs (TImageList data) fail at start-up.
  */
 #include "drv.h"
 
 #define BI_RGB  0
 #define BI_RLE8 1
 #define BI_RLE4 2
+#define BI_BITFIELDS 3
 
 typedef struct {
     WORD  width, height;
@@ -19,6 +24,9 @@ typedef struct {
     LPBYTE colors;
     DWORD stride;
     BYTE  topdown;       /* negative biHeight: scan 0 is the top row in memory */
+    /* 16/32 bpp: red, green, blue masks as shift and width */
+    BYTE  sh[3], wd[3];
+    DWORD mask[3];
 } DIBINFO;
 
 /* byte offset of DIB scan 'scan' (0 = bottom row, as GDI counts them) in
@@ -52,9 +60,33 @@ static int dib_parse(DIBINFO *di, LPBYTE bmi)
         di->ncolors = di->bits <= 8 ? 1 << di->bits : 0;
         if (h->biClrUsed && h->biClrUsed < di->ncolors) di->ncolors = (WORD)h->biClrUsed;
     }
-    if (di->bits != 1 && di->bits != 4 && di->bits != 8 && di->bits != 24) return 0;
-    if (di->topdown && di->comp != BI_RGB) return 0;        /* RLE is always bottom-up */
+    if (di->bits != 1 && di->bits != 4 && di->bits != 8 && di->bits != 16 && di->bits != 24 && di->bits != 32)
+        return 0;
+    if (di->comp == BI_BITFIELDS && di->bits != 16 && di->bits != 32) return 0;
+    if (di->topdown && di->comp != BI_RGB && di->comp != BI_BITFIELDS) return 0;  /* RLE: bottom-up */
     di->colors = bmi + (WORD)hs;
+    if (di->bits == 16 || di->bits == 32) {
+        WORD i;
+        if (di->comp == BI_BITFIELDS) {
+            /* the masks follow a BITMAPINFOHEADER; a V4/V5 header holds
+               them at the same offset */
+            LPDWORD m = (LPDWORD)(bmi + 40);
+            di->mask[0] = m[0]; di->mask[1] = m[1]; di->mask[2] = m[2];
+        } else if (di->comp == BI_RGB) {
+            if (di->bits == 16) { di->mask[0] = 0x7C00; di->mask[1] = 0x03E0; di->mask[2] = 0x001F; }
+            else { di->mask[0] = 0xFF0000UL; di->mask[1] = 0xFF00; di->mask[2] = 0xFF; }
+        } else
+            return 0;
+        for (i = 0; i < 3; i++) {
+            DWORD m = di->mask[i];
+            BYTE sh = 0, wd = 0;
+            if (!m) return 0;
+            while (!(m & 1)) { m >>= 1; sh++; }
+            while (m & 1) { m >>= 1; wd++; }
+            di->sh[i] = sh; di->wd[i] = wd;
+        }
+        di->ncolors = 0;
+    }
     di->stride = (((DWORD)di->width * di->bits + 31) >> 5) << 2;
     return 1;
 }
@@ -63,6 +95,42 @@ static DWORD dib_rgb(DIBINFO *di, WORD i)
 {
     LPBYTE c = di->colors + i * (di->core ? 3 : 4);
     return (DWORD)c[2] | ((DWORD)c[1] << 8) | ((DWORD)c[0] << 16);
+}
+
+/* 16/32 bpp DIB pixel -> RGB (COLORREF order) and back */
+static BYTE chan_get(DWORD v, BYTE sh, BYTE wd)
+{
+    DWORD c = (v >> sh) & (wd >= 32 ? 0xFFFFFFFFUL : (1UL << wd) - 1);
+    if (wd >= 8) return (BYTE)(c >> (wd - 8));
+    c <<= 8 - wd;                       /* replicate the top bits */
+    return (BYTE)(c | (c >> wd) | (wd < 4 ? c >> (2 * wd) : 0));
+}
+
+static DWORD dib_hi_rgb(DIBINFO *di, const BYTE *p)
+{
+    DWORD v = di->bits == 16 ? (DWORD)p[0] | ((DWORD)p[1] << 8) : *(const DWORD *)p;
+    if (di->comp == BI_RGB && di->bits == 32) return (DWORD)p[2] | ((DWORD)p[1] << 8) | ((DWORD)p[0] << 16);
+    return (DWORD)chan_get(v, di->sh[0], di->wd[0]) | ((DWORD)chan_get(v, di->sh[1], di->wd[1]) << 8) |
+           ((DWORD)chan_get(v, di->sh[2], di->wd[2]) << 16);
+}
+
+static DWORD chan_put(BYTE c, BYTE sh, BYTE wd)
+{
+    DWORD v = wd >= 8 ? (DWORD)c << (wd - 8) : (DWORD)(c >> (8 - wd));
+    return v << sh;
+}
+
+static void dib_hi_put(DIBINFO *di, BYTE *o, DWORD rgb)
+{
+    DWORD v;
+    if (di->comp == BI_RGB && di->bits == 32) {
+        o[0] = (BYTE)(rgb >> 16); o[1] = (BYTE)(rgb >> 8); o[2] = (BYTE)rgb; o[3] = 0;
+        return;
+    }
+    v = chan_put((BYTE)rgb, di->sh[0], di->wd[0]) | chan_put((BYTE)(rgb >> 8), di->sh[1], di->wd[1]) |
+        chan_put((BYTE)(rgb >> 16), di->sh[2], di->wd[2]);
+    o[0] = (BYTE)v; o[1] = (BYTE)(v >> 8);
+    if (di->bits == 32) { o[2] = (BYTE)(v >> 16); o[3] = (BYTE)(v >> 24); }
 }
 
 /* physical color of an RGB for DIB conversion (palette: full match) */
@@ -130,11 +198,39 @@ static void build_cmap(DIBINFO *di, BYTE mono, LPWORD xlat)
     }
 }
 
-/* huge pointer helpers */
+/* huge pointer helpers: GDI's tiled huge pointers (selector + n * __AHINCR
+   per 64 KB); a selector with a limit above 64 KB (Win32 DIB bits passed
+   through a 32-bit segment) is addressed through a selector of our own */
+DWORD seg_limit(WORD sel);
+#pragma aux seg_limit = \
+    ".386" \
+    "movzx eax,ax" \
+    "lsl eax,eax" \
+    "jz ok" \
+    "xor eax,eax" \
+    "ok:" \
+    "mov edx,eax" \
+    "shr edx,16" \
+    parm [ax] value [dx ax];
+
+static WORD big_sel;
+
 static LPBYTE hptr(LPBYTE base, DWORD off, WORD *avail)
 {
     DWORD lin = (DWORD)FP_OFF(base) + off;
     WORD o = (WORD)lin;
+#ifndef OLDWIN
+    if (g.pmode && lin > 0xFFFFUL && seg_limit(FP_SEG(base)) > 0xFFFFUL) {
+        if (!big_sel) {
+            big_sel = sel_alloc(1);
+            if (big_sel && !sel_setlimit(big_sel, 0xFFFFUL)) { sel_free(big_sel, 1); big_sel = 0; }
+        }
+        if (big_sel && sel_setbase(big_sel, sel_getbase(FP_SEG(base)) + lin)) {
+            *avail = 0xFFFF;
+            return (LPBYTE)MK_FP(big_sel, 0);
+        }
+    }
+#endif
     *avail = o ? (WORD)(0x10000UL - o) : 0xFFFF;
     return (LPBYTE)MK_FP(FP_SEG(base) + (WORD)(lin >> 16) * g.ahincr, o);
 }
@@ -166,10 +262,11 @@ static void dib_to_work(DIBINFO *di, const BYTE *raw, WORD x0, WORD n, BYTE mono
 {
     WORD i;
     BYTE *o = bufD;
-    if (di->bits == 24) {
-        const BYTE *p = raw + x0 * 3;
-        for (i = 0; i < n; i++, p += 3) {
-            DWORD rgb = (DWORD)p[2] | ((DWORD)p[1] << 8) | ((DWORD)p[0] << 16);
+    if (di->bits >= 16) {
+        BYTE step = (BYTE)(di->bits >> 3);
+        const BYTE *p = raw + x0 * step;
+        for (i = 0; i < n; i++, p += step) {
+            DWORD rgb = di->bits == 24 ? (DWORD)p[2] | ((DWORD)p[1] << 8) | ((DWORD)p[0] << 16) : dib_hi_rgb(di, p);
             if (mono) *o++ = rgb_is_white(rgb) ? 0xFF : 0;
             else if (g.pf == PF_8) *o++ = dither8(rgb, dx + i, dy);
             else { pix_put(o, pix_of(dib_phys(rgb, 0)), Bpp); o += Bpp; }
@@ -262,7 +359,7 @@ static WORD dib_set(SURF *s, SHORT dx, SHORT ytop, WORD start, WORD count, LPBYT
     SHORT cl = 0, ct = 0, cr = s->width, cb = s->height;
     RLESTATE rs;
     BYTE rle = (di->comp == BI_RLE8 || di->comp == BI_RLE4);
-    if (di->comp != BI_RGB && !rle) return 0;
+    if (di->comp != BI_RGB && di->comp != BI_BITFIELDS && !rle) return 0;
     if (clip) {
         if (clip->left > cl) cl = clip->left;
         if (clip->top > ct) ct = clip->top;
@@ -380,23 +477,30 @@ static WORD dib_get(SURF *s, WORD start, WORD count, LPBYTE bits, DIBINFO *di, L
     BYTE Bpp = s->Bpp;
     DWORD lastpix = 0xFFFFFFFFUL;
     BYTE lastidx = 0;
-    if (di->comp != BI_RGB) return 0;
-    if (di->width > CHUNKPX) return 0;
+    if (di->comp != BI_RGB && di->comp != BI_BITFIELDS) return 0;
     if (g.dibwords && di->bits <= 8 && xlat && g.palettized && !s->mono) {
-        /* Windows 3.0: GDI supplies a byte table physical index -> DIB index */
+        /* GDI supplies a byte table physical index -> DIB index; in pieces
+           of CHUNKPX pixels (whole bytes) */
         for (k = 0; k < count; k++) {
-            WORD scan = start + k, i, n = di->width < s->width ? di->width : s->width;
+            WORD scan = start + k, n = di->width < s->width ? di->width : s->width, x0;
             SHORT row = s->height - 1 - scan;
-            if (row < 0) continue;
-            row_read(s, row, 0, n, bufD);
-            memset(bufS, 0, (WORD)di->stride);
-            for (i = 0; i < n; i++) {
-                BYTE idx = xlat[bufD[i]];
-                if (di->bits == 8) bufS[i] = idx;
-                else if (di->bits == 4) bufS[i >> 1] |= (i & 1) ? (idx & 15) : (idx << 4);
-                else if (idx & 1) bufS[i >> 3] |= (BYTE)(0x80 >> (i & 7));
+            DWORD rowoff = BANDOFF(di, k, count);
+            if (row < 0 || scan >= di->height) continue;
+            for (x0 = 0; x0 < di->width; x0 += CHUNKPX) {
+                WORD i, m = di->width - x0 > CHUNKPX ? CHUNKPX : di->width - x0;
+                WORD nb = (WORD)(((DWORD)m * di->bits + 7) >> 3);
+                WORD have = x0 < n ? (n - x0 < m ? n - x0 : m) : 0;
+                if (x0 + m == di->width) nb = (WORD)(di->stride - (((DWORD)x0 * di->bits) >> 3));
+                memset(bufS, 0, nb);
+                if (have) row_read(s, row, x0, have, bufD);
+                for (i = 0; i < have; i++) {
+                    BYTE idx = xlat[bufD[i]];
+                    if (di->bits == 8) bufS[i] = idx;
+                    else if (di->bits == 4) bufS[i >> 1] |= (i & 1) ? (idx & 15) : (idx << 4);
+                    else if (idx & 1) bufS[i >> 3] |= (BYTE)(0x80 >> (i & 7));
+                }
+                huge_write(bits, rowoff + (((DWORD)x0 * di->bits) >> 3), nb, bufS);
             }
-            if (scan < di->height) huge_write(bits, BANDOFF(di, k, count), (WORD)di->stride, bufS);
         }
         return count;
     }
@@ -409,32 +513,43 @@ static WORD dib_get(SURF *s, WORD start, WORD count, LPBYTE bits, DIBINFO *di, L
             dib_tab[i * 3] = (BYTE)rgb; dib_tab[i * 3 + 1] = (BYTE)(rgb >> 8); dib_tab[i * 3 + 2] = (BYTE)(rgb >> 16);
         }
         dib_tabn = n;
-    } else
+    } else if (di->bits <= 8)
         make_table(di);
     for (k = 0; k < count; k++) {
         WORD scan = start + k;
         SHORT row = s->height - 1 - scan;
-        WORD i, n = di->width < s->width ? di->width : s->width;
-        BYTE *o = bufS;
-        if (row < 0) continue;
-        row_read(s, row, 0, n, bufD);
-        memset(bufS, 0, (WORD)di->stride < ROWBUF ? (WORD)di->stride : ROWBUF);
-        for (i = 0; i < n; i++) {
-            DWORD rgb;
-            if (s->mono) rgb = bufD[i] ? 0xFFFFFFUL : 0;
-            else rgb = pixel_to_rgb(pix_get(bufD + i * Bpp, Bpp));
-            if (di->bits == 24) {
-                o[0] = (BYTE)(rgb >> 16); o[1] = (BYTE)(rgb >> 8); o[2] = (BYTE)rgb; o += 3;
-            } else {
-                BYTE idx;
-                if (rgb == lastpix) idx = lastidx;
-                else { idx = table_match(rgb); lastpix = rgb; lastidx = idx; }
-                if (di->bits == 8) bufS[i] = idx;
-                else if (di->bits == 4) bufS[i >> 1] |= (i & 1) ? idx : (idx << 4);
-                else if (idx) bufS[i >> 3] |= (BYTE)(0x80 >> (i & 7));
+        WORD n = di->width < s->width ? di->width : s->width, x0;
+        DWORD rowoff = BANDOFF(di, k, count);
+        if (row < 0 || scan >= di->height) continue;
+        /* in pieces of CHUNKPX pixels (a multiple of 8: whole bytes) */
+        for (x0 = 0; x0 < di->width; x0 += CHUNKPX) {
+            WORD i, m = di->width - x0 > CHUNKPX ? CHUNKPX : di->width - x0;
+            WORD nb = (WORD)(((DWORD)m * di->bits + 7) >> 3);
+            WORD have = x0 < n ? (n - x0 < m ? n - x0 : m) : 0;
+            BYTE *o = bufS;
+            if (x0 + m == di->width)        /* the last piece: the scan's padding too */
+                nb = (WORD)(di->stride - (((DWORD)x0 * di->bits) >> 3));
+            memset(bufS, 0, nb < ROWBUF ? nb : ROWBUF);
+            if (have) row_read(s, row, x0, have, bufD);
+            for (i = 0; i < have; i++) {
+                DWORD rgb;
+                if (s->mono) rgb = bufD[i] ? 0xFFFFFFUL : 0;
+                else rgb = pixel_to_rgb(pix_get(bufD + i * Bpp, Bpp));
+                if (di->bits == 24) {
+                    o[0] = (BYTE)(rgb >> 16); o[1] = (BYTE)(rgb >> 8); o[2] = (BYTE)rgb; o += 3;
+                } else if (di->bits >= 16) {
+                    dib_hi_put(di, o, rgb); o += di->bits >> 3;
+                } else {
+                    BYTE idx;
+                    if (rgb == lastpix) idx = lastidx;
+                    else { idx = table_match(rgb); lastpix = rgb; lastidx = idx; }
+                    if (di->bits == 8) bufS[i] = idx;
+                    else if (di->bits == 4) bufS[i >> 1] |= (i & 1) ? idx : (idx << 4);
+                    else if (idx) bufS[i >> 3] |= (BYTE)(0x80 >> (i & 7));
+                }
             }
+            huge_write(bits, rowoff + (((DWORD)x0 * di->bits) >> 3), nb, bufS);
         }
-        if (scan < di->height) huge_write(bits, BANDOFF(di, k, count), (WORD)di->stride, bufS);
     }
     return count;
 }
@@ -449,9 +564,9 @@ WORD EXPORT DeviceBitmapBits(LPGBITMAP bm, WORD fGet, WORD start, WORD count, LP
     surf_from_dev(&s, bm);
     DBG("DBB get=%u bm=%ux%ux%u st=%u n=%u dib=%ux%ux%u comp=%u nc=%u core=%u xlat=%p\n", fGet, bm->bmWidth, bm->bmHeight,
         bm->bmBitsPixel, start, count, di.width, di.height, di.bits, di.comp, di.ncolors, di.core, xlat);
-    if (start >= s.height) return 0;
-    if (start + count > s.height) count = s.height - start;
     if (fGet) {
+        if (start >= s.height) return 0;
+        if (start + count > s.height) count = s.height - start;
         if (g.debug > 1) {
             WORD k;
             dbg_printf(" get: xlat=%x:%x tab:", FP_SEG(xlat), FP_OFF(xlat));
@@ -460,13 +575,23 @@ WORD EXPORT DeviceBitmapBits(LPGBITMAP bm, WORD fGet, WORD start, WORD count, LP
             dbg_printf("\n");
         }
         if (!bits) return count;
-        return dib_get(&s, start, count, bits, &di, (LPBYTE)xlat);
+        {
+            WORD r = dib_get(&s, start, count, bits, &di, (LPBYTE)xlat);
+            DBG(" get -> %u\n", r);
+            return r;
+        }
     }
     dcm_begin(xlat);
-    /* bitmap height may differ from DIB height: rows bottom-up */
+    /* the DIB is placed at the top left of the bitmap: DIB scan n goes to
+       row (DIB height - 1 - n). A bitmap can be taller than the DIB - GDI
+       converts big Win32 DIBs in bands of 60 scans through a bitmap of 63
+       rows, which it then copies from its top (rows counted from the
+       bitmap's bottom left a black line at every band) */
+    if (start >= di.height) return 0;
+    if (start + count > di.height) count = di.height - start;
     if (g.debug > 1) {
         WORD k, r;
-        r = dib_set(&s, 0, (SHORT)(s.height - start - count), start, count, bits, &di, NULL, xlat);
+        r = dib_set(&s, 0, (SHORT)(di.height - start - count), start, count, bits, &di, NULL, xlat);
         dbg_printf(" xlat=%x:%x dib:", FP_SEG(xlat), FP_OFF(xlat));
         for (k = 0; k < (WORD)(di.stride * di.height) && k < 64; k++) dbg_printf(" %02x", bits[k]);
         dbg_printf("\n bmp(%x:%x):", FP_SEG(bm->bmBits), FP_OFF(bm->bmBits));
@@ -478,7 +603,7 @@ WORD EXPORT DeviceBitmapBits(LPGBITMAP bm, WORD fGet, WORD start, WORD count, LP
         dbg_printf("\n");
         return r;
     }
-    return dib_set(&s, 0, (SHORT)(s.height - start - count), start, count, bits, &di, NULL, xlat);
+    return dib_set(&s, 0, (SHORT)(di.height - start - count), start, count, bits, &di, NULL, xlat);
 }
 
 WORD EXPORT DIBToDevice(LPVOID lpDev, SHORT x, SHORT y, WORD start, WORD count, LPGRECT clip,
@@ -493,6 +618,10 @@ WORD EXPORT DIBToDevice(LPVOID lpDev, SHORT x, SHORT y, WORD start, WORD count, 
     surf_from_dev(&s, lpDev);
     if (s.screen && !g.enabled) return count;
     ytop = y + (SHORT)di.height - (SHORT)(start + count);
+#ifdef DIBDBG
+    DBG("D2D x=%d y=%d start=%u count=%u %ux%u bpp=%u td=%u bits=%x:%x lim=%lx\n", x, y, start, count, di.width,
+        di.height, di.bits, di.topdown, FP_SEG(bits), FP_OFF(bits), seg_limit(FP_SEG(bits)));
+#endif
     dcm_begin(xlat);
     if (s.screen) {
         screen_busy++;
@@ -523,7 +652,7 @@ WORD EXPORT StretchDIBits(LPVOID lpDev, WORD fGet, SHORT dx, SHORT dy, SHORT dw,
     BYTE flipx = 0, flipy = 0;
     SHORT cl, ct, cr, cb, y, lastscan = -32768;
     if (fGet) return (WORD)-1;
-    if (!dib_parse(&di, bmi) || di.comp != BI_RGB) return (WORD)-1;
+    if (!dib_parse(&di, bmi) || (di.comp != BI_RGB && di.comp != BI_BITFIELDS)) return (WORD)-1;
     if (!dw || !dh || !sw || !sh) return 1;
     if (dw < 0) { dx += dw + 1; dw = -dw; flipx ^= 1; }
     if (dh < 0) { dy += dh + 1; dh = -dh; flipy ^= 1; }

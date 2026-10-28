@@ -5,7 +5,7 @@
 #ifndef WVBNT_H
 #define WVBNT_H
 
-#define WVB_VERSION_STR "1.0"
+#define WVB_VERSION_STR "1.1"
 
 /* Registry values in the device key of the miniport
    (NT 3.x/4: Services\winvbe\Device0, 2000/XP: Control\Video\{..}\0000) */
@@ -14,6 +14,7 @@
 #define WVB_REG_PATCH    L"WinVbe.Patch915" /* string: 915PATCH command(s), "" = off */
 #define WVB_REG_DAC8     L"WinVbe.Dac8"     /* DWORD: 8 bit DAC in 256 colours (default 1) */
 #define WVB_REG_DEBUG    L"WinVbe.Debug"    /* DWORD: debug output to port E9h */
+#define WVB_REG_ACCESS   L"WinVbe.Access"   /* DWORD: 0 auto, 1 linear frame buffer only, 2 VGA window only */
 
 /* refresh rates offered in the mode list (mode index = vbe mode * 8 + entry) */
 #define WVB_NHZ 6
@@ -26,6 +27,12 @@ static const unsigned short wvb_hz[WVB_NHZ] = { 60, 70, 72, 75, 85, 100 };
 /* private IOCTL: display start (DirectDraw flip), in: ULONG byte offset
    into video memory; the change is made during the vertical retrace */
 #define IOCTL_WVB_SET_START 0x00232004UL   /* function 0x801 */
+/* private IOCTL: banked modes (no linear frame buffer): in: ULONG position
+   of the VGA window in units of the granularity (VBE 4F05h) */
+#define IOCTL_WVB_SET_BANK  0x00232008UL   /* function 0x802 */
+/* VIDEO_MODE_INFORMATION.DriverSpecificAttributeFlags of a banked mode:
+   this flag | granularity in KB | window size in KB << 16 */
+#define WVB_BANKED_FLAG     0x80000000UL
 
 #pragma pack(push, 1)
 typedef struct {

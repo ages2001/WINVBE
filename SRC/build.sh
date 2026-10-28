@@ -16,6 +16,9 @@ sh test/build.sh
 mkdir -p bin
 python3 tools/mkfon.py bin
 cp drv/obj/winvbe.drv bin/WINVBE.DRV
+mkdir -p bin/WIN30 bin/WIN9X
+cp drv/obj/winvbe30.drv bin/WIN30/WINVBE.DRV
+cp drv/obj/winvbe9x.drv bin/WIN9X/WINVBE.DRV
 cp cfg/obj/winvbecf.exe bin/WINVBECF.EXE
 cp cfg/obj/wvbpower.scr bin/WVBPOWER.SCR
 cp cfg/obj/install.exe bin/INSTALL.EXE

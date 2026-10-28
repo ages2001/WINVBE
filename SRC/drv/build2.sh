@@ -6,6 +6,8 @@ cd "$(dirname "$0")"
 python3 ../tools/mkres.py ../res >/dev/null
 mkdir -p obj2
 python3 ../tools/mkres2.py ../res obj2/res >/dev/null
+# Windows 2.x VGA driver bitmaps, cursors and icons (tools/stockres.py)
+python3 ../tools/stockres.py old ../msfiles/stock/VGA211.DRV obj2/res
 mkdir -p obj2
 CFLAGS="-q -ml -zu -s -3 -ox -zl -zls -wx -we -wcd=303 -wcd=202 -bt=windows -fpi -zq -i=. -DOLDWIN $XCFLAGS"
 for f in util vbe color rop surf blt cursor enable robj output text dib; do

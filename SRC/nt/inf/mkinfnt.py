@@ -7,7 +7,7 @@ def inf(arch):
     x64 = arch == 'amd64'
     dec = ',NTamd64' if x64 else ''
     mfg = 'WINVBE.Mfg' + ('.NTamd64' if x64 else '')
-    return f"""; WINVBE v1.0 - universal VESA/VGA/SVGA display driver
+    return f"""; WINVBE v1.1 - universal VESA/VGA/SVGA display driver
 ; {'Windows XP x64 / Server 2003 x64' if x64 else 'Windows NT 4.0, 2000, XP and Server 2003 (x86)'}
 ;
 ; Windows 2000/XP/2003: Device Manager > Display adapters > (adapter) >
@@ -21,7 +21,7 @@ Signature="$CHICAGO$"
 Provider=%WVB%
 ClassGUID={{4D36E968-E325-11CE-BFC1-08002BE10318}}
 Class=Display
-DriverVer=10/06/2026,1.0.0.0
+DriverVer=10/19/2026,1.1.0.0
 
 [DestinationDirs]
 DefaultDestDir   = 11
@@ -90,7 +90,7 @@ HKR,,TypesSupported,0x00010001,7
 [Strings]
 WVB          = "WINVBE"
 WVB.Desc     = "WINVBE Universal VESA/VGA/SVGA"
-Disk         = "WINVBE v1.0 for Windows NT"
+Disk         = "WINVBE v1.1 for Windows NT"
 REG_SZ       = 0x00000000
 REG_MULTI_SZ = 0x00010000
 REG_DWORD    = 0x00010001
@@ -115,7 +115,7 @@ def oemsetup():
     # padded so that Setup's sorted list is in order of size and depth
     txt = ''.join('    "WINVBE %ux%ux%u"%s= "WINVBE VESA %4u x %4u, %2u bit (%s)"\n' %
                   (w, h, b, ' ' * (16 - len('%ux%ux%u' % (w, h, b))), w, h, b, COLORS[b]) for w, h, b in NT3_MODES)
-    return r"""; WINVBE v1.0 - universal VESA display driver for Windows NT 3.1, 3.5, 3.51
+    return r"""; WINVBE v1.1 - universal VESA display driver for Windows NT 3.1, 3.5, 3.51
 ;
 ; Windows NT Setup (Main group) > Options > Change System Settings >
 ;   Display > Other > path of this folder (e.g. A:\ or C:\WINVBE\NT\I386\NT3X).
@@ -314,7 +314,7 @@ finish_InstallOption = +
     exit
 
 [Source Media Descriptions]
-    1 = "WINVBE v1.0 for Windows NT 3.x", TAGFILE = winvbe.sys
+    1 = "WINVBE v1.1 for Windows NT 3.x", TAGFILE = winvbe.sys
 
 [ProductType]
 STF_PRODUCT  = Winnt

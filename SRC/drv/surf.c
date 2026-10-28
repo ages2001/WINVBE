@@ -225,6 +225,28 @@ void scr_fill(WORD y, WORD x, WORD n, DWORD pix)
 
 /* ---------------- memory bitmaps ------------------------------------ */
 
+/* a memory bitmap of more than 64 KB without the tiled layout of GDI
+   (bmSegmentIndex = 0): one segment with a 32-bit limit - its rows are
+   reached through a selector of their own (a few in turn: source,
+   destination and pattern can be such bitmaps at the same time) */
+static WORD flat_sel[4];
+static BYTE flat_next;
+
+static void surf_flat(SURF *s, DWORD size)
+{
+#ifndef OLDWIN
+    WORD *ps;
+    if (!g.pmode || s->scanseg || size <= 0x10000UL) return;
+    ps = &flat_sel[flat_next++ & 3];
+    if (!*ps) {
+        *ps = sel_alloc(1);
+        if (!*ps || !sel_setlimit(*ps, 0xFFFFUL)) { *ps = 0; return; }
+    }
+    s->flat = sel_getbase(s->sel) + s->off;
+    s->rsel = *ps;
+#endif
+}
+
 void surf_from_dev(SURF *s, LPVOID lpDev)
 {
     LPGBITMAP bm = (LPGBITMAP)lpDev;
@@ -248,6 +270,7 @@ void surf_from_dev(SURF *s, LPVOID lpDev)
         s->off = FP_OFF(bm->bmBits);
         s->scanseg = bm->bmSegmentIndex ? bm->bmScanSegment : 0;
         s->seginc = bm->bmSegmentIndex;
+        surf_flat(s, (DWORD)s->pitch * s->planar * s->height);
         return;
     }
     s->Bpp = s->mono ? 1 : (BYTE)((bm->bmBitsPixel + 7) >> 3);
@@ -258,11 +281,16 @@ void surf_from_dev(SURF *s, LPVOID lpDev)
     s->off = FP_OFF(bm->bmBits);
     s->scanseg = bm->bmSegmentIndex ? bm->bmScanSegment : 0;
     s->seginc = bm->bmSegmentIndex;
+    surf_flat(s, (DWORD)s->pitch * s->height);
 }
 
 LPBYTE mem_row(SURF *s, WORD y)
 {
     WORD pitch = s->planar ? s->pitch * s->planar : s->pitch;
+    if (s->flat) {
+        sel_setbase(s->rsel, s->flat + (DWORD)y * pitch);
+        return (LPBYTE)MK_FP(s->rsel, 0);
+    }
     if (s->planar) {
         if (s->scanseg) {
             WORD seg = y / s->scanseg;

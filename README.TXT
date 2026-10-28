@@ -1,4 +1,4 @@
-WINVBE v1.0 - Universal VESA/VGA/SVGA display driver for Windows 1.0-XP
+WINVBE v1.1 - Universal VESA/VGA/SVGA display driver for Windows 1.0-XP
 ========================================================================
 
 WINVBE is a generic display driver that uses the VESA BIOS Extensions (VBE)
@@ -49,7 +49,49 @@ Files
   The WIN30, WIN31 and WIN2X folders contain Microsoft files (fonts, screen
   grabbers, VDDVGA30.386, WIN.CNF) so that no Windows disks are needed.
   They belong to Microsoft Windows and are only meant for use with your
-  own licensed copy of Windows; do not redistribute them.
+  own licensed copy of Windows; do not redistribute them. The same applies
+  to the standard Windows bitmaps, cursors and icons inside the drivers
+  (see "Features").
+
+What's new in v1.1
+------------------
+  * Standard Windows mouse pointers, icons and window bitmaps on every
+    version: each driver carries the ones of Microsoft's own VGA driver
+    for that Windows (1.01, 2.x, 3.0, 3.1, NT 3.x); the Windows 9x driver
+    carries none, so Windows 95/98/ME use their own, exactly as with
+    Microsoft's drivers. WIN30 and WIN31 now have separate WINVBE.DRV
+    files. NT 4.0 and later always used the system's own.
+  * NT 3.1: the default colours and the colour dialog table are those of
+    NT 3.1's VGA driver.
+  * Windows NT: graphics cards without a usable linear frame buffer (VBE
+    1.2, ISA/VL-Bus cards, many cards emulated by 86Box/PCem) work: the
+    banked VGA window at A000h is used, with a copy of the screen in system
+    memory. Without any VBE graphics mode WINVBE starts in VGA 320x200x256
+    - before, Windows NT stopped at boot with "The required system file is
+    bad or missing" when the card had no LFB modes.
+  * Windows NT: WINVBECF "Install driver" from a CD failed the next time
+    ("Cannot copy WINVBE.DLL", NT Setup: "Unable to do the specified file
+    copy operation"): files copied from a CD are read-only. The copies are
+    now made writable (also existing read-only ones), and the temporary
+    name for a file in use is a valid 8.3 name (NT 3.1 FAT).
+  * Windows 3.x 386 enhanced mode: Windows stopped at its logo on current
+    graphics cards (e.g. GeForce RTX, Radeon RX 7000): the standard VDD
+    virtualizes the CRTC registers, through which their video BIOS talks to
+    the card. WINVBE.386 now lets the video BIOS calls of Windows reach the
+    CRTC and status registers directly, and the BIOS gets a real mode stack
+    of its own (8 KB).
+  * Windows 9x: big DIBs of Win32 programs, which GDI converts in bands,
+    were drawn with a black line at every band; memory bitmaps and DIB bits
+    in one big (32-bit) segment are addressed correctly.
+  * Windows 98/95/ME (GitHub issue #1): Delphi programs such as ConText and
+    NetMeter stopped at start ("This program has performed an illegal
+    operation", exception 0EEDFADEh) in 32-bit colour. GDI hands a DIB in
+    the screen's own format (32 bpp on a 32-bpp screen) to the driver
+    unconverted, and WINVBE refused it, so SetDIBits and CreateDIBitmap
+    failed - and with them the image lists (toolbar pictures) that Delphi
+    programs load at start. 16 and 32 bpp DIBs (BI_RGB and BI_BITFIELDS)
+    are now supported in SetDIBits, GetDIBits, SetDIBitsToDevice and
+    StretchDIBits; GetDIBits also works for bitmaps wider than 2048 pixels.
 
 Features
 --------
@@ -103,6 +145,10 @@ Features
   * Small (96 dpi) and large (120 dpi) fonts; WINVBE brings its own large
     system fonts (WVB*.FON) and uses Microsoft's 8514 fonts when Windows
     already has them.
+  * The standard bitmaps (window buttons, scroll bar arrows, check boxes),
+    mouse pointers and message box icons of each Windows version, taken
+    from its own VGA driver: Windows 1.01 (EGA), 2.x, 3.0, 3.1 and NT 3.x;
+    Windows 95/98/ME and NT 4.0 and later use their built-in ones.
   * Sky blue default colours (as in the Windows 3.x 256-color drivers) on
     both Windows 3.0 and 3.1, with the cream application workspace on 3.1;
     the classic navy scheme is available as an option. Windows 2.x gets its
@@ -117,9 +163,9 @@ Features
 Installation
 ------------
 Method 1 - DOS installer (recommended, all Windows versions, no disks)
-  Copy the WINVBE10 folder to the hard disk (e.g. C:\WINVBE10), exit
+  Copy the WINVBE11 folder to the hard disk (e.g. C:\WINVBE11), exit
   Windows and run
-      C:\WINVBE10\INSTALL
+      C:\WINVBE11\INSTALL
   INSTALL looks for Windows in the folders of the hard disks (one level,
   e.g. C:\WINDOWS, C:\WIN30, D:\WIN31), lists what it finds (Windows 1.0x,
   2.xx, 3.0, 3.1x, Windows for Workgroups 3.1x, 95/98/ME, NT) and asks for
@@ -198,7 +244,7 @@ Method 3 - Windows Setup (OEMSETUP.INF), no disks needed
   Windows 3.1: run SETUP from DOS in the Windows directory, or Windows
     Setup in Main group > Options > Change System Settings. Display ->
     "Other display (Requires disk from OEM)", path: the WIN31 folder (e.g.
-    C:\WINVBE10\WIN31). Choose a colour depth / font size. All files Setup
+    C:\WINVBE11\WIN31). Choose a colour depth / font size. All files Setup
     needs are in the folder; it installs VDDVGA30.386 + WVB30.3GR (the VGA
     grabber pair for Windows 3.0 style display drivers). DOS Setup builds
     WIN.COM without the start-up logo (it would look for the logo files on
@@ -217,7 +263,7 @@ WINVBECF.EXE.
 Windows 2.x / Windows/386 with Windows Setup (optional)
   INSTALL is the easy way. To use Setup's "Other" display choice instead:
   run SETUP from the Windows 2.x Setup disk, choose "Other (requires disk
-  provided by a hardware manufacturer)" and type C:\WINVBE10\WIN2X (the
+  provided by a hardware manufacturer)" and type C:\WINVBE11\WIN2X (the
   folder holds WINVBE.DRV, WINVBE.LGO and the grabber WINVBE.GRB).
   Windows/386 Setup also wants WINVBE.3EX and WINVBE.386 from your own
   Windows/386: run PREP2X C:\WIN386 (or PREP2X A:) in the WIN2X folder.
@@ -239,8 +285,11 @@ Windows NT
 ----------
 WINVBE for Windows NT is a video miniport (WINVBE.SYS) that sets the VBE
 modes through the video BIOS (Int 10h of the video port driver; the x64
-version uses the BIOS emulator of Windows XP/2003 x64) and a linear frame
-buffer display driver (WINVBE.DLL). Use the folder for your system:
+version uses the BIOS emulator of Windows XP/2003 x64) and a frame buffer
+display driver (WINVBE.DLL). Cards without a usable linear frame buffer
+use the banked VGA window at A000h (slower; no DirectDraw); without VBE
+graphics modes WINVBE uses VGA 320x200x256, so that Windows still starts.
+Use the folder for your system:
   NT\I386\NT3X     Windows NT 3.1, 3.5, 3.51 (WINVBE.DLL runs in CSRSS)
   NT\I386\NT4-XP   Windows NT 4.0, 2000, XP, Server 2003
   NT\AMD64         Windows XP x64, Server 2003 x64
@@ -268,8 +317,11 @@ monitor, lists the modes and sets resolution, colours and refresh rate
 the debug log, which refresh rates are offered (monitor/EDID, all, 60 Hz)
 and the built-in 915 patch (the same commands as 915PATCH.EXE, applied by
 the miniport at every start). The Display control panel works as well.
-Modes: 8, 15, 16, 24 and 32 bit, every VBE mode with a linear frame
-buffer, refresh rates through VBE 3.0 (EDID limits).
+Modes: 8, 15, 16, 24 and 32 bit, every VBE mode (linear frame buffer, or
+the VGA window when there is none), refresh rates through VBE 3.0 (EDID
+limits). Registry value WinVbe.Access (DWORD, in the device key, e.g.
+Services\winvbe\Device0): 0 automatic, 1 linear frame buffer only, 2 VGA
+window only.
 DirectDraw (4.0/2000/XP/x64), Direct3D, OpenGL and power management: see
 Features. NT 3.x has no DirectDraw; OpenGL works on NT 3.51 (Microsoft's
 or Mesa's OPENGL32.DLL). The 915 patch box of WINVBECF is shown only on
@@ -415,6 +467,11 @@ Hardware notes
 
 Known limitations
 -----------------
+  * Windows 9x in 32 bpp: GDI itself (not the driver) cannot create a
+    device-dependent bitmap whose width is a multiple of 2048 pixels, or
+    one of more than about 16 MB (e.g. 2560x1600). Programs that make a
+    screen-sized bitmap can fail at 2048x1536x32 and 2560x1600x32; use
+    24 or 16 bpp for those resolutions.
   * MS-DOS boxes on real video cards: Windows' standard VGA virtual
     display device does not know the VBE modes. WINVBE.386 sets the BIOS
     mode of a box that goes full screen again (screen contents kept), and
@@ -540,6 +597,17 @@ Test programs (TEST folder)
                                    chain in video memory (HAL or RGB device)
   GLTEST [seconds]                OpenGL window, rotating triangle
   DCITEST                         DCI primary surface (Windows 9x)
+  W32GDI [rounds]                 Win32 GDI drawing as applications do it
+                                  (DIB sections, GetDIBits, image lists,
+                                  icons, pens, regions, fonts, SetDIBits/
+                                  GetDIBits round trips); W32GDI.TXT names
+                                  the last step after a crash and ends
+                                  with the number of failed checks
+  DBGRUN program.exe [args]       runs a program under the Win32 debugger
+                                  and logs its DLLs and exceptions (with
+                                  the class and message of Delphi
+                                  exceptions) to DBGRUN.TXT - for reports
+                                  of programs that fail to start
 Each writes a report (DDTEST.TXT etc.) next to the program. They are
 Win32 programs (Windows 95 and NT 3.51 or later; DDTEST/D3DTEST need
 DirectX, NT 4.0 SP3 or later).
@@ -552,9 +620,21 @@ Troubleshooting
   * Try Access=2 (VGA window), Refresh=0, a lower Depth, or Forcevga=1.
   * Debug=1 writes a log to port E9h (Bochs/QEMU: -debugcon file:log.txt)
     or to the serial port given in DebugPort.
+  * A Win32 program fails or crashes at start (Windows 9x): run it with
+    TEST\DBGRUN.EXE and TEST\W32GDI.EXE and attach DBGRUN.TXT and
+    W32GDI.TXT to the report.
 
 Tested
 ------
+v1.1: standard bitmaps, cursors and icons checked (message boxes, window
+buttons, scroll bars, I-beam) on Windows 1.01, 2.03, 3.0, 3.1, 95, NT 3.1
+and NT 3.51; the resources in the drivers compared byte by byte with
+those of Microsoft's drivers. NT banked modes (no LFB, forced) on NT 3.1,
+4.0 and XP x64, the VGA 320x200 fallback on NT 3.1. Windows 3.1 with the
+CRTC untrapping in the simulation of real hardware, with full-screen and
+windowed MS-DOS boxes. A Win32 GDI test (TEST\W32GDI.EXE: DIB sections in
+every format, GetDIBits, image lists, icons, pens, regions, fonts) on
+Windows 95 at 8, 16, 24 and 32 bpp.
 QEMU (SeaBIOS VBE 3.0 / Bochs DISPI) with Windows 3.0 (with Multimedia
 Extensions) in real, standard and 386 enhanced mode, and Windows 3.1 in
 386 enhanced mode: 8/15/16/24/32 bpp, LFB and banked access, 320x200 to
@@ -565,6 +645,13 @@ and Windows 3.0 DOS Setup from the WIN31/WIN30 folders without any disk.
 Windows 95 (RTM) installed with Device Manager: 8/16/24 bpp, Display
 Properties and WINVBECF mode changes, Explorer, Paint, MS-DOS Prompt in a
 window and full screen.
+Windows 98 SE installed with Device Manager (Have Disk): 8/16/24/32 bpp,
+800x600 to 2560x1440; ConText (Delphi) at 1920x1080x32, which failed with
+1.0 and the first 1.1 build (issue #1); ImageList_Read of its toolbar data
+and SetDIBits/GetDIBits round trips in 16/24/32 bpp DIBs (BI_RGB and
+BI_BITFIELDS, 7 to 2500 pixels wide) on every screen depth; W32GDI.EXE
+(also in the simulation of real hardware, without DISPI); MS-DOS Prompt in
+a window and full screen; WINVBECF.
 Windows 2.03 and Windows/386 2.11, installed with INSTALL and with their
 Setup ("Other" display): 8/16/24/32 bpp up to 1280x800, menus, Paint,
 Calculator, Reversi, full-screen DOS sessions, WINVBECF, INSTALL /VGA.
@@ -620,11 +707,21 @@ and MS-DOS; regression on NT 4.0 (DirectDraw), 2000, XP x64, Windows
 
 Building from source
 --------------------
-Requires Open Watcom C 2.0, NASM and Python 3 (the resources - cursors,
-icons and system bitmaps - are generated by SRC\TOOLS\MKRES.PY, the 1.x/2.x
-resources by MKRES2.PY, the large fonts by MKFON.PY; NEFIX.PY gives the
-1.x/2.x driver the module layout their Setup programs expect; BINPATCH.PY
-is a Python model of the WIN100/WIN200.BIN linking done by INSTALL).
+Requires Open Watcom C 2.0, NASM and Python 3. The standard bitmaps,
+cursors and icons are taken from Microsoft's display drivers by
+SRC\TOOLS\STOCKRES.PY at build time; these files are not part of the
+source and must be put into msfiles/stock next to build.sh (from your
+Windows disks; the names are case sensitive):
+    VGA30.DRV    VGA.DRV of Windows 3.0
+    VGA31.DRV    VGA.DRV of Windows 3.1
+    VGA211.DRV   VGA.DRV of Windows 2.11 (IBM PS/2, "VGA450")
+    EGA101.DRV   EGAHIRES.DRV of Windows 1.01
+    VGANT31.DLL  VGA.DLL of Windows NT 3.1
+Without them the drivers get WINVBE's own artwork instead (MKRES.PY,
+MKRES2.PY for 1.x/2.x). The OEM tables are generated by MKRES.PY and
+MKRES2.PY, the large fonts by MKFON.PY. NEFIX.PY gives the 1.x/2.x driver
+the module layout their Setup programs expect; BINPATCH.PY is a Python
+model of the WIN100/WIN200.BIN linking done by INSTALL.
     export WATCOM=/opt/watcom
     sh build.sh
 WINVBE.386 is assembled with NASM (SRC\VXD, MKVXD32.PY writes the LE
@@ -633,4 +730,4 @@ by SRC\NT\BUILD.SH.
 The binaries are written to SRC\BIN; SRC\TOOLS\MKINF.PY writes the
 OEMSETUP.INF files.
 
-WINVBE v1.0 - (c) 2026
+WINVBE v1.1 - (c) 2026

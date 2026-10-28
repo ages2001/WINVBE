@@ -409,7 +409,7 @@ int main(int argc, char **argv)
         strcat(path, "915PATCH.LOG");
         logf = fopen(path, "w");
     }
-    say("915PATCH - WINVBE v1.0 video BIOS mode patcher for Intel graphics\n\n");
+    say("915PATCH - WINVBE v1.1 video BIOS mode patcher for Intel graphics\n\n");
     rc = patch_run(argc, argv);
     if (logf) fclose(logf);
     return rc;

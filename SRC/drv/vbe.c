@@ -98,6 +98,11 @@ int sel_setbase(WORD sel, DWORD base)
     return 1;
 }
 
+DWORD sel_getbase(WORD sel)
+{
+    return g.pmode ? dpmi_getbase(sel) : (DWORD)sel << 4;
+}
+
 int sel_setlimit(WORD sel, DWORD limit)
 {
     return !dpmi_setlimit(sel, HIWORD(limit), LOWORD(limit));
@@ -347,6 +352,16 @@ void env_init(void)
 #endif
     rm_stack_seg = g.dosbuf_seg;
     rm_stack_top = 4094;
+#ifndef OLDWIN
+    /* a real mode stack of its own for the BIOS: the video BIOSes of
+       current cards (AMD AtomBIOS, NVIDIA) need several KB, more than is
+       left above the data in the transfer buffer */
+    db = GlobalDosAlloc(8192);
+    if (db) {
+        rm_stack_seg = HIWORD(db);
+        rm_stack_top = 8190;
+    }
+#endif
     DBG("WINVBE: winver=%x winflags=%x pm=%u enh=%u ahincr=%x a000=%x dosbuf=%x:%x\n",
         g.winver, g.winflags, g.pmode, g.enhanced, g.ahincr, g.a000sel, g.dosbuf_sel, g.dosbuf_seg);
 }

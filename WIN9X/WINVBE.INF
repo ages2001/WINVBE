@@ -1,4 +1,4 @@
-; WINVBE v1.0 - Universal VESA/VGA/SVGA display driver
+; WINVBE v1.1 - Universal VESA/VGA/SVGA display driver
 ; Windows 95/98/ME: Device Manager > Display adapters > (adapter) > Properties >
 ;   Driver > Change Driver (Update Driver) > Have Disk > path of this folder
 
@@ -12,7 +12,7 @@ DefaultDestDir=11
 WINVBE.CopyCF=10
 
 [SourceDisksNames]
-1="WINVBE v1.0",,0
+1="WINVBE v1.1",,0
 
 [SourceDisksFiles]
 winvbe.drv=1

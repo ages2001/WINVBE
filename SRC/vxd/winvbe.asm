@@ -32,6 +32,16 @@
 ; a VM in the background (a windowed MS-DOS box) has called the BIOS to set
 ; a mode - which modern video BIOSes do on the hardware, past the VDD - the
 ; display driver is told to set its mode again (INT 2Fh AX=B57Eh, BX=3/4).
+; Video BIOS calls of the system VM (Windows 3.x, real video cards): the
+; standard VDD traps the VGA ports and virtualizes them - registers it does
+; not know (extended CRTC registers, through which NVIDIA BIOSes talk to the
+; card) read back stale values and writes may not reach the card, and the
+; input status register does not toggle. Modern video BIOSes then never
+; finish a mode set: Windows hangs at its logo in 386 enhanced mode. While
+; the system VM is in INT 10h, the CRTC and input status ports it traps are
+; untrapped for it (the BIOS works on the real hardware, as in standard
+; mode and as with the Windows 9x VDD), and trapped again when the BIOS
+; returns.
 ; Write combining (all hardware): the display driver asks with INT 2Fh
 ; AX=B57Fh (reflected to V86 mode, where this VxD hooks INT 2Fh) for its
 ; linear frame buffer mapping to be write-combined. With PAT (Pentium III,
@@ -67,6 +77,8 @@ End_Nest_Exec       equ 86h
 Save_Client_State   equ 8Dh
 MapPhysToLinear     equ 6Ch
 Restore_Client_State equ 8Eh
+Enable_Local_Trapping equ 98h
+Disable_Local_Trapping equ 9Ah
 
 DISPI_IDX       equ 1CEh
 DISPI_DAT       equ 1CFh
@@ -92,7 +104,7 @@ WVBN_FOREGROUND equ 4               ; Windows has the screen back
 ddb:    dd 0                    ; DDB_Next
         dw 0300h                ; DDB_SDK_Version (Windows 3.0)
         dw 0                    ; DDB_Req_Device_Number: undefined
-        db 1, 0                 ; version 1.0
+        db 1, 1                 ; version 1.1
         dw 0                    ; DDB_Flags
         db 'WINVBE  '           ; DDB_Name
         dd 27FFFFFFh            ; DDB_Init_Order: just before the VDD (28000000h)
@@ -397,6 +409,16 @@ notify:
 ; its mode (real hardware only: DISPI/SVGA II are repaired otherwise).
 ; Debug build: AX=4F7Eh/4F7Fh test triggers, AX=4F10h calls logged.
 int10_hook:
+        cmp     ebx, [sysvm]
+        jne     .nsys
+        cmp     byte [win9x], 0                 ; Windows 9x VDD: passes them
+        jne     .nsys
+        cmp     byte [present], 0               ; emulated adapters: not needed
+        jne     .nsys
+%ifndef NOUNTRAP
+        call    untrap_begin
+%endif
+.nsys:
 %ifdef DEBUGE9
         cmp     word [ebp + 1Ch], 4F7Fh         ; test hook: the adapter lost
         jne     .sr                             ; its mode, then a resume
@@ -458,6 +480,115 @@ int10_hook:
 
 int10_ret:
         mov     byte [modechk_pending], 1
+        ret
+
+; system VM INT 10h: VGA ports trapped now (TSS I/O permission bitmap of the
+; current VM) are untrapped; the outermost call's return traps them again
+untrap_begin:
+        pushad
+        inc     dword [udepth]
+        cmp     dword [udepth], 1
+        jne     .reg
+        call    get_iopm
+        xor     edi, edi                        ; ports untrapped (bit mask)
+        xor     ecx, ecx
+.l:     movzx   edx, word [uports + ecx * 2]
+        call    trapped
+        jnc     .n
+        bts     edi, ecx
+        push    ecx
+        push    edi
+        VMMcall Disable_Local_Trapping
+        pop     edi
+        pop     ecx
+.n:     inc     ecx
+        cmp     ecx, NUPORTS
+        jb      .l
+        mov     [umask], edi
+%ifdef DEBUGE9
+        mov     al, 'u'
+        out     0E9h, al
+        mov     eax, edi
+        call    hexb
+%endif
+.reg:   mov     esi, untrap_ret
+        xor     eax, eax
+        xor     edx, edx
+        VMMcall Call_When_VM_Returns
+        popad
+        ret
+
+; Call_When_VM_Returns: EBX = VM
+untrap_ret:
+        pushad
+        dec     dword [udepth]
+        jnz     .x
+        mov     edi, [umask]
+        xor     ecx, ecx
+.l:     bt      edi, ecx
+        jnc     .n
+        movzx   edx, word [uports + ecx * 2]
+        push    ecx
+        push    edi
+        VMMcall Enable_Local_Trapping
+        pop     edi
+        pop     ecx
+.n:     inc     ecx
+        cmp     ecx, NUPORTS
+        jb      .l
+        mov     dword [umask], 0
+%ifdef DEBUGE9
+        mov     al, 'r'
+        out     0E9h, al
+%endif
+.x:     popad
+        ret
+
+; the I/O permission bitmap of the TSS (it holds the trapping of the
+; current VM) -> iopm_lin, iopm_len (bytes)
+get_iopm:
+        mov     dword [iopm_len], 0
+        str     ax
+        sgdt    [gdtr]
+        movzx   eax, ax
+        and     al, 0F8h
+        add     eax, [gdtr + 2]
+        mov     edx, [eax + 2]                  ; base 0..23
+        and     edx, 0FFFFFFh
+        movzx   ecx, byte [eax + 7]
+        shl     ecx, 24
+        or      edx, ecx                        ; TSS base
+        movzx   ecx, word [eax]
+        movzx   ebx, byte [eax + 6]
+        and     ebx, 0Fh
+        shl     ebx, 16
+        or      ecx, ebx                        ; limit
+        movzx   eax, word [edx + 66h]           ; I/O map base
+        cmp     eax, ecx
+        jae     .x
+        sub     ecx, eax
+        add     edx, eax
+        mov     [iopm_lin], edx
+        mov     [iopm_len], ecx
+.x:     ret
+
+; EDX = port -> CF = trapped
+trapped:
+        push    eax
+        push    edx
+        mov     eax, edx
+        shr     eax, 3
+        cmp     eax, [iopm_len]
+        jae     .t                              ; outside the bitmap: trapped
+        add     eax, [iopm_lin]
+        and     edx, 7
+        bt      [eax], edx
+        pop     edx
+        pop     eax
+        ret
+.t:     pop     edx
+        pop     eax
+        stc
         ret
 
 ; VM event in the VM that got the screen (after the VDD): set its BIOS mode
@@ -1314,6 +1445,17 @@ load_state:
 ; ---------------------------------------------------------------------
         align 4
 sysvm   dd 0
+udepth  dd 0                    ; system VM INT 10h nesting
+umask   dd 0
+iopm_lin dd 0
+iopm_len dd 0
+gdtr    dw 0
+        dd 0
+; the CRTC (index/data, colour and mono addresses) and the input status
+; registers; the other VGA registers stay with the VDD (it needs them for
+; its own work in the system VM: untrapping them hangs MS-DOS boxes)
+uports  dw 3B4h, 3B5h, 3D4h, 3D5h, 3BAh, 3DAh
+NUPORTS equ 6
 owner   dd 0
 focus_vm dd 0                   ; VM with the display focus (any hardware)
 inmsg   db 0                    ; message mode (any hardware)

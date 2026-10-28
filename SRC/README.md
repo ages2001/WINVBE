@@ -31,6 +31,7 @@ VirtualBox and VMware.
 - [Building from source](#building-from-source)
 - [Repository layout](#repository-layout)
 - [Testing](#testing)
+- [Changelog](#changelog)
 
 ## Highlights
 
@@ -38,6 +39,10 @@ VirtualBox and VMware.
   beyond, 8/15/16/24/32 bpp, LFB or the banked VGA window (chosen
   automatically). On Bochs, QEMU and VirtualBox adapters any custom size
   is available too.
+- **Looks like Windows.** The standard mouse pointers, icons and window
+  bitmaps of each version: the drivers carry the ones of Microsoft's own
+  VGA driver for Windows 1.01, 2.x, 3.0, 3.1 and NT 3.x, while Windows
+  95/98/ME and NT 4.0+ use their built-in ones.
 - **Monitor aware.** It reads EDID over VBE/DDC to get the monitor name,
   native resolution and refresh range, and "Automatic" picks the native
   mode. With a VBE 3.0 BIOS you can set the refresh rate (CVT or
@@ -54,7 +59,9 @@ VirtualBox and VMware.
   of real cards that the standard VGA virtual display device knows nothing
   about.
 - **Windows NT family.** A video miniport plus a frame buffer display
-  driver for NT 3.1 - XP, plus a 64-bit build for XP/2003 x64. Features:
+  driver for NT 3.1 - XP, plus a 64-bit build for XP/2003 x64. Cards
+  without a linear frame buffer (VBE 1.2, ISA/VL-Bus, many 86Box/PCem
+  cards) use the banked VGA window. Features:
   - DirectDraw with page flipping
   - Direct3D (software RGB device) and OpenGL in software
   - DPMS, Stand By and Hibernate
@@ -95,15 +102,15 @@ VirtualBox and VMware.
 
 ## Installation
 
-Download the release archive and copy the `WINVBE10` folder to the hard
-disk, e.g. `C:\WINVBE10`.
+Download the release archive and copy the `WINVBE11` folder to the hard
+disk, e.g. `C:\WINVBE11`.
 
 ### Windows 1.x, 2.x, 3.0, 3.1 and Windows for Workgroups
 
 Exit Windows and run the DOS installer:
 
 ```
-C:\WINVBE10\INSTALL
+C:\WINVBE11\INSTALL
 ```
 
 INSTALL finds the Windows installations on the hard disks and recognises
@@ -226,12 +233,19 @@ WINVBE draws in software, and on a modern card the bus is the bottleneck.
   modes. Run them full screen. Text-mode DOS boxes are fine in both
   windowed and full-screen mode.
 - **No 16-colour planar VBE modes.**
+- **Windows 9x in 32 bpp:** GDI itself cannot create device-dependent
+  bitmaps whose width is a multiple of 2048 pixels or that are larger than
+  about 16 MB, so programs that make a screen-sized bitmap can fail at
+  2048x1536x32 and 2560x1600x32. Use 24 or 16 bpp there.
+- **Banked modes on NT** (cards without a linear frame buffer) are slower
+  and have no DirectDraw.
 - **Windows 9x** uses WINVBE as a Windows 3.1-style driver: DirectDraw
   runs in emulation on WINVBE's DCI primary surface, and changing the
   resolution needs a restart.
 - **The Microsoft files are not in the source tree.** The release package
   carries some Microsoft files (VGA fonts and grabbers, `VDDVGA30.386`)
-  so that Windows 3.x Setup needs no disks. They belong to your own
+  so that Windows 3.x Setup needs no disks, and the drivers contain the
+  standard Windows bitmaps, cursors and icons. They belong to your own
   licensed copy of Windows.
 
 See *Known limitations* in [README.TXT](README.TXT) for details.
@@ -244,6 +258,19 @@ Requirements:
 - [NASM](https://www.nasm.us/)
 - Python 3 (resources, fonts, INF files, LE/NE post-processing)
 - for Windows NT: mingw-w64 (i686 and x86_64) and Python's `pefile`
+
+The standard bitmaps, cursors and icons are copied from Microsoft's
+display drivers at build time (`tools/stockres.py`). They are not part of
+this repository: put them into `msfiles/stock/` from your own Windows
+disks. Without them the drivers get WINVBE's own artwork.
+
+| File | Taken from |
+|---|---|
+| `VGA30.DRV` | `VGA.DRV` of Windows 3.0 |
+| `VGA31.DRV` | `VGA.DRV` of Windows 3.1 |
+| `VGA211.DRV` | `VGA.DRV` of Windows 2.11 (IBM PS/2) |
+| `EGA101.DRV` | `EGAHIRES.DRV` of Windows 1.01 |
+| `VGANT31.DLL` | `VGA.DLL` of Windows NT 3.1 |
 
 ```sh
 export WATCOM=/opt/watcom
@@ -270,10 +297,10 @@ nt/mini/    WINVBE.SYS - NT video miniport (i386 and amd64)
 nt/disp/    WINVBE.DLL - NT display driver (NT 3.x CSRSS and NT 4.0+ kernel)
 nt/cfg/     WINVBECF.EXE for Windows NT
 nt/inf/     WINVBE.INF (NT 4.0 - XP x64) and OEMSETUP.INF (NT 3.x)
-res/        generated cursors, icons, bitmaps and fonts
+res/        WINVBE's own cursors, icons and bitmaps (fallback), OEM tables
 tools/      resource, font, INF and executable-format tools, packaging
 hosttest/   unit tests that run the drawing code on Linux
-test/       GDI, DCI, DirectDraw, Direct3D and OpenGL test programs
+test/       GDI (16-bit and Win32), DCI, DirectDraw, Direct3D and OpenGL test programs
 docs/       images for this README
 ```
 
@@ -297,3 +324,46 @@ Covered areas:
 
 Real hardware reports are welcome. Please include the *Active* line and the
 adapter box of WINVBECF and, if possible, a `Debug=1` log.
+
+## Changelog
+
+### v1.1
+
+- Standard Windows mouse pointers, icons and window bitmaps on every
+  version, taken from Microsoft's own VGA driver of that version (1.01,
+  2.x, 3.0, 3.1, NT 3.x); Windows 9x and NT 4.0+ use their built-in ones.
+  `WIN30` and `WIN31` have separate drivers now.
+- **Windows NT:** cards without a usable linear frame buffer work with the
+  banked VGA window and a copy of the screen in system memory. Without any
+  VBE graphics mode WINVBE starts in VGA 320x200x256 instead of stopping
+  the boot with *"The required system file is bad or missing"*. Registry
+  value `WinVbe.Access` (0 automatic, 1 LFB only, 2 VGA window only).
+- **Windows NT:** WINVBECF could not install a second time after an
+  installation from a CD (read-only files; *"Cannot copy WINVBE.DLL"*, NT
+  Setup: *"Unable to do the specified file copy operation"*); temporary
+  files for files in use have 8.3 names (NT 3.1 FAT).
+- **Windows 3.x 386 enhanced mode:** no more hang at the Windows logo on
+  current graphics cards (GeForce RTX, Radeon RX 7000): the video BIOS
+  calls reach the CRTC and status registers directly instead of the VDD's
+  virtual ones, and the BIOS gets its own 8 KB stack.
+- **Windows 9x:** big Win32 DIBs were drawn with a black line every 60
+  scans; bitmaps and DIB bits in one 32-bit segment are addressed
+  correctly.
+- **Windows 98/95/ME, [issue #1](https://github.com/ages2001/WINVBE/issues/1):**
+  Delphi programs such as ConText and NetMeter stopped at start in 32-bit
+  colour (exception `0EEDFADEh`). GDI passes DIBs in the screen's own
+  format to the driver unconverted, and WINVBE refused 16/32 bpp DIBs, so
+  `SetDIBits` failed and with it the toolbar image lists. 16 and 32 bpp DIBs
+  (`BI_RGB`, `BI_BITFIELDS`) are now supported everywhere, and `GetDIBits`
+  works for bitmaps wider than 2048 pixels. Reproduced and verified on
+  Windows 98 SE.
+- `TEST\W32GDI.EXE` checks the results of the DIB calls and compares
+  `SetDIBits`/`GetDIBits` round trips. New `TEST\DBGRUN.EXE` runs a
+  program under the Win32 debugger and logs its exceptions (with the class
+  and message of Delphi exceptions) - for reports of programs that fail to
+  start.
+- NT 3.1 default colours from NT 3.1's VGA driver.
+
+### v1.0
+
+First release.

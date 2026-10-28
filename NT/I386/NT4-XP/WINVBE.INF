@@ -1,4 +1,4 @@
-; WINVBE v1.0 - universal VESA/VGA/SVGA display driver
+; WINVBE v1.1 - universal VESA/VGA/SVGA display driver
 ; Windows NT 4.0, 2000, XP and Server 2003 (x86)
 ;
 ; Windows 2000/XP/2003: Device Manager > Display adapters > (adapter) >
@@ -12,7 +12,7 @@ Signature="$CHICAGO$"
 Provider=%WVB%
 ClassGUID={4D36E968-E325-11CE-BFC1-08002BE10318}
 Class=Display
-DriverVer=10/06/2026,1.0.0.0
+DriverVer=10/19/2026,1.1.0.0
 
 [DestinationDirs]
 DefaultDestDir   = 11
@@ -81,7 +81,7 @@ HKR,,TypesSupported,0x00010001,7
 [Strings]
 WVB          = "WINVBE"
 WVB.Desc     = "WINVBE Universal VESA/VGA/SVGA"
-Disk         = "WINVBE v1.0 for Windows NT"
+Disk         = "WINVBE v1.1 for Windows NT"
 REG_SZ       = 0x00000000
 REG_MULTI_SZ = 0x00010000
 REG_DWORD    = 0x00010001

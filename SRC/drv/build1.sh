@@ -8,6 +8,8 @@ cd "$(dirname "$0")"
 mkdir -p obj1
 nasm -f obj -DOLDWIN $NASMFLAGS -o obj1/entry.obj entry.asm
 python3 ../tools/mkres2.py ../res obj1/res oldwin1 >/dev/null
+# Windows 1.0x (EGA driver) bitmaps, cursors and icons (tools/stockres.py)
+python3 ../tools/stockres.py old ../msfiles/stock/EGA101.DRV obj1/res
 cd obj1
 wlink @../display1.lnk file entry.obj,../obj2/util.obj,../obj2/vbe.obj,../obj2/color.obj,../obj2/rop.obj,../obj2/surf.obj,../obj2/blt.obj,../obj2/cursor.obj,../obj2/enable.obj,../obj2/robj.obj,../obj2/output.obj,../obj2/text.obj,../obj2/dib.obj
 cd ..

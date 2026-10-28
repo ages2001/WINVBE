@@ -90,6 +90,11 @@ typedef struct {
     ULONG  pitch;
     ULONG  phys;
     UCHAR  rbits, rpos, gbits, gpos, bbits, bpos;
+    /* modes without a usable linear frame buffer: the VGA window at A000h,
+       switched with VBE 4F05h (window win, granularity and size in KB);
+       the display driver draws into a copy in system memory */
+    UCHAR  banked, win;
+    USHORT gran_kb, winsz_kb;
 } MODE;
 
 typedef struct {
@@ -123,6 +128,7 @@ typedef struct {
     PVOID  fbmap;               /* mapped frame buffer (last map) */
     ULONG  fbsize;
     ULONG  start;               /* display start (byte offset), DirectDraw flip */
+    ULONG  bank;                /* window position of a banked mode, -1 = unknown */
     UCHAR  dpms;                /* VBE/PM 4F10h states: 1 standby, 2 suspend, 4 off; 0x80 = asked */
     UCHAR  reposted;            /* video BIOS initialization tried after a failed mode set */
     UCHAR  pci_ok;              /* pcicfg holds the PCI header from the start */
@@ -136,6 +142,7 @@ typedef struct {
     ULONG  refresh_cfg;         /* WinVbe.Refresh: 0 = auto */
     ULONG  dac8;
     ULONG  refpol;              /* WinVbe.Refresh: 0 monitor (EDID), 1 all, 2 60 Hz */
+    ULONG  access;              /* WinVbe.Access: 0 auto, 1 LFB only, 2 VGA window only */
     WCHAR  patchcmd[80];
     char   patchres[160];
     WVBINFO info;               /* written to the registry */
@@ -693,9 +700,14 @@ static void gather(DEVEXT *dx)
     memcpy(vi, "VBE2", 4);
     memset(&r, 0, sizeof(r));
     r.eax = 0x4F00; r.usebuf = 1;
-    if (!int10(dx, &r, vi, 512, 512) || (USHORT)r.eax != 0x004F || memcmp(vi, "VESA", 4)) {
+#ifndef TEST_NOVBE
+#define TEST_NOVBE 0
+#endif
+    if (!int10(dx, &r, vi, 512, 512) || (USHORT)r.eax != 0x004F || memcmp(vi, "VESA", 4) || TEST_NOVBE) {
         dbg("no VBE (ax=%x)\n", r.eax);
-        return;
+        dx->vbever = 0;
+        dx->nmodes = 0;
+        goto fallback;
     }
     dx->vbever = *(USHORT *)(vi + 4);
     dx->caps = vi[10];
@@ -733,7 +745,7 @@ static void gather(DEVEXT *dx)
         if (!int10(dx, &r, mi, 0, 256) || (USHORT)r.eax != 0x004F) continue;
         attr = *(USHORT *)mi;
         bpp = mi[0x19]; model = mi[0x1B];
-        if ((attr & 0x91) != 0x91) continue;          /* supported, graphics, LFB */
+        if ((attr & 0x11) != 0x11) continue;          /* supported, graphics */
         memset(&md, 0, sizeof(md));
         md.vbe = list[i];
         md.w = *(USHORT *)(mi + 0x12);
@@ -741,8 +753,25 @@ static void gather(DEVEXT *dx)
         md.phys = *(ULONG *)(mi + 0x28);
         md.attr_vga = (attr & 0x20) ? 0 : 1;
         pitch = *(USHORT *)(mi + 0x10);
-        if (dx->vbever >= 0x300 && *(USHORT *)(mi + 0x32)) pitch = *(USHORT *)(mi + 0x32);
-        if (md.w < 640 || md.h < 480 || !md.phys) continue;
+        if (md.w < 640 || md.h < 480) continue;
+        if ((attr & 0x80) && md.phys && dx->access != 2) {
+            if (dx->vbever >= 0x300 && *(USHORT *)(mi + 0x32)) pitch = *(USHORT *)(mi + 0x32);
+        } else {
+            /* no linear frame buffer (VBE 1.2, ISA/VL-Bus cards, or
+               WinVbe.Access=2): window A or B at A000h, writable */
+            UCHAR wa = mi[2], wb = mi[3];
+            USHORT gran = *(USHORT *)(mi + 4), wsz = *(USHORT *)(mi + 6);
+            if (dx->access == 1 || (attr & 0x40)) continue;
+            if ((wa & 5) == 5 && *(USHORT *)(mi + 8) == 0xA000) md.win = 0;
+            else if ((wb & 5) == 5 && *(USHORT *)(mi + 10) == 0xA000) md.win = 1;
+            else continue;
+            if (wsz > 64) wsz = 64;
+            if (!gran || !wsz || gran > wsz || (64 % gran)) continue;
+            md.banked = 1;
+            md.gran_kb = gran;
+            md.winsz_kb = wsz;
+            md.phys = 0xA0000;
+        }
         if (bpp == 8 && model == 4) {
             md.bpp = 8; md.Bpp = 1;
         } else if (model == 6 && (bpp == 15 || bpp == 16 || bpp == 24 || bpp == 32)) {
@@ -761,10 +790,15 @@ static void gather(DEVEXT *dx)
         if (dx->memkb && (pitch * md.h + 1023) / 1024 > dx->memkb) continue;
         for (j = 0; j < dx->nmodes; j++)
             if (dx->modes[j].w == md.w && dx->modes[j].h == md.h && dx->modes[j].bpp == md.bpp) break;
-        if (j < dx->nmodes) continue;
         md.hzmask = hz_mask(dx, &md);
-        dx->modes[dx->nmodes++] = md;
-        dbg(" mode %x %ux%ux%u pitch=%u lfb=%x hz=%x\n", md.vbe, md.w, md.h, md.bpp, md.pitch, md.phys, md.hzmask);
+        if (j < dx->nmodes) {
+            /* the same mode with a linear frame buffer is better */
+            if (!dx->modes[j].banked || md.banked) continue;
+            dx->modes[j] = md;
+        } else
+            dx->modes[dx->nmodes++] = md;
+        dbg(" mode %x %ux%ux%u pitch=%u %s=%x gran=%uK hz=%x\n", md.vbe, md.w, md.h, md.bpp, md.pitch,
+            md.banked ? "window" : "lfb", md.phys, md.gran_kb, md.hzmask);
     }
     /* 15 bpp only where there is no 16 bpp mode of the same size */
     for (i = 0; i < dx->nmodes; i++) {
@@ -776,6 +810,23 @@ static void gather(DEVEXT *dx)
             for (j = i; j + 1 < dx->nmodes; j++) dx->modes[j] = dx->modes[j + 1];
             dx->nmodes--; i--;
         }
+    }
+fallback:
+    /* no VBE graphics mode at all: standard VGA 320x200 in 256 colours,
+       so that Windows still starts (instead of "The required system file
+       ... is bad or missing" from WINSRV when no display works) */
+    if (!dx->nmodes) {
+        MODE *md = &dx->modes[0];
+        memset(md, 0, sizeof(*md));
+        md->vbe = 0x13;
+        md->w = 320; md->h = 200; md->bpp = 8; md->Bpp = 1;
+        md->attr_vga = 1;
+        md->pitch = 320;
+        md->hzmask = 1;
+        md->banked = 1; md->gran_kb = 64; md->winsz_kb = 64;
+        md->phys = 0xA0000;
+        dx->nmodes = 1;
+        dbg("no VBE graphics modes: VGA 320x200x8\n");
     }
     dx->gathered = 1;
 
@@ -855,7 +906,7 @@ static int dispi_mode(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
 {
     MODE *md = &dx->modes[idx];
     USHORT id = dispi_rd(0);
-    if (id < 0xB0C0 || id > 0xB0C5) return 0;
+    if (md->banked || id < 0xB0C0 || id > 0xB0C5) return 0;
     dispi_wr(4, 0);
     dispi_wr(1, md->w);
     dispi_wr(2, md->h);
@@ -901,7 +952,22 @@ static int set_mode1(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
     MODE *md = &dx->modes[idx];
     RM r;
     int done = 0;
+    ULONG lin = md->banked ? 0 : 0x4000;
 
+    if (md->vbe == 0x13) {              /* VGA fallback */
+        memset(&r, 0, sizeof(r));
+        r.eax = noclear ? 0x0093 : 0x0013;
+        int10(dx, &r, 0, 0, 0);
+        dx->cur_pitch = 320;
+        dx->dacbits = 6;
+        dx->cur = idx;
+        dx->cur_hz = hzi;
+        dx->mode_set = 1;
+        dx->start = 0;
+        dx->bank = 0xFFFFFFFF;
+        dbg("set VGA 13h\n");
+        return 1;
+    }
     if (hzi < WVB_NHZ && dx->vbever >= 0x300) {
         CRTC c;
         fill_crtc(dx, &c, md, wvb_hz[hzi]);
@@ -912,7 +978,7 @@ static int set_mode1(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
             c.refresh = (USHORT)(c.pclk / ((ULONG)c.htotal * c.vtotal / 100));
         }
         memset(&r, 0, sizeof(r));
-        r.eax = 0x4F02; r.ebx = md->vbe | 0x4000 | 0x0800 | (noclear ? 0x8000 : 0); r.usebuf = 1;
+        r.eax = 0x4F02; r.ebx = md->vbe | lin | 0x0800 | (noclear ? 0x8000 : 0); r.usebuf = 1;
         if (int10(dx, &r, &c, sizeof(c), 0) && (USHORT)r.eax == 0x004F) {
             done = 1;
             dbg("set %x %ux%ux%u CRTC %ux%u clk=%u refresh=%u\n", md->vbe, md->w, md->h, md->bpp,
@@ -921,7 +987,7 @@ static int set_mode1(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
     }
     if (!done) {
         memset(&r, 0, sizeof(r));
-        r.eax = 0x4F02; r.ebx = md->vbe | 0x4000 | (noclear ? 0x8000 : 0);
+        r.eax = 0x4F02; r.ebx = md->vbe | lin | (noclear ? 0x8000 : 0);
         if (!int10(dx, &r, 0, 0, 0) || (USHORT)r.eax != 0x004F) {
             dbg("set %x failed ax=%x\n", md->vbe, r.eax);
             return 0;
@@ -945,6 +1011,26 @@ static int set_mode1(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
     dx->cur_hz = hzi;
     dx->mode_set = 1;
     dx->start = 0;
+    dx->bank = 0xFFFFFFFF;
+    return 1;
+}
+
+/* banked modes: the position of the VGA window (in granularity units) */
+static int set_bank(DEVEXT *dx, ULONG pos)
+{
+    MODE *md = &dx->modes[dx->cur];
+    RM r;
+    if (!md->banked) return 0;
+    if (pos == dx->bank) return 1;
+    if (md->vbe == 0x13) return pos == 0;
+    memset(&r, 0, sizeof(r));
+    r.eax = 0x4F05; r.ebx = md->win; r.edx = pos;
+    if (!int10(dx, &r, 0, 0, 0) || (USHORT)r.eax != 0x004F) {
+        dbg("4F05 %x failed ax=%x\n", pos, r.eax);
+        dx->bank = 0xFFFFFFFF;
+        return 0;
+    }
+    dx->bank = pos;
     return 1;
 }
 
@@ -1002,6 +1088,11 @@ static void fill_info(DEVEXT *dx, VIDEO_MODE_INFORMATION *v, ULONG i, ULONG hzi)
     v->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
     v->VideoMemoryBitmapWidth = md->w;
     v->VideoMemoryBitmapHeight = md->h;
+    if (md->banked) {
+        /* for WINVBE.DLL: granularity and window size in KB */
+        v->AttributeFlags |= VIDEO_MODE_BANKED | VIDEO_MODE_NO_OFF_SCREEN;
+        v->DriverSpecificAttributeFlags = WVB_BANKED_FLAG | md->gran_kb | ((ULONG)md->winsz_kb << 16);
+    }
     if (md->bpp == 8) {
         UCHAR b = (dx->mode_set && dx->cur == i) ? dx->dacbits : ((dx->caps & 1) && dx->dac8 ? 8 : 6);
         v->NumberRedBits = v->NumberGreenBits = v->NumberBlueBits = b;
@@ -1118,6 +1209,23 @@ static BOOLEAN NTAPI StartIO(PVOID hw, PVIDEO_REQUEST_PACKET rp)
             rp->OutputBufferLength < sizeof(VIDEO_MEMORY_INFORMATION)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
         if (!dx->mode_set) break;
         md = &dx->modes[dx->cur];
+        if (md->banked) {
+            /* the VGA window */
+            pa.QuadPart = 0xA0000;
+            len = (ULONG)md->winsz_kb << 10;
+            io = 0;
+            va = ((VIDEO_MEMORY *)rp->InputBuffer)->RequestedVirtualAddress;
+            st = VideoPortMapMemory(dx, pa, &len, &io, &va);
+            if (st != NO_ERROR) { dbg("map window failed %x\n", st); break; }
+            mi->VideoRamBase = va;
+            mi->VideoRamLength = len;
+            mi->FrameBufferBase = va;
+            mi->FrameBufferLength = len;
+            info = sizeof(VIDEO_MEMORY_INFORMATION);
+            dx->bank = 0xFFFFFFFF;
+            dbg("map window -> %x len %x\n", (ULONG)(ULONG_PTR)va, len);
+            break;
+        }
         pa.QuadPart = md->phys;
         vis = (dx->cur_pitch * md->h + 0xFFF) & ~0xFFFUL;
         /* NT 4.0 and later: all video memory (DirectDraw off-screen
@@ -1159,7 +1267,7 @@ static BOOLEAN NTAPI StartIO(PVOID hw, PVIDEO_REQUEST_PACKET rp)
         PVOID va;
         if (rp->InputBufferLength < sizeof(VIDEO_SHARE_MEMORY) ||
             rp->OutputBufferLength < sizeof(VIDEO_SHARE_MEMORY_INFORMATION)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
-        if (!dx->mode_set || dx->level < 40) break;
+        if (!dx->mode_set || dx->level < 40 || dx->modes[dx->cur].banked) break;
         total = dx->memkb > 32 * 1024 ? 32UL << 20 : dx->memkb << 10;
         if (sm->ViewOffset > total || sm->ViewOffset + sm->ViewSize > total) { st = ERROR_INVALID_PARAMETER; break; }
         pa.QuadPart = dx->modes[dx->cur].phys;
@@ -1190,6 +1298,11 @@ static BOOLEAN NTAPI StartIO(PVOID hw, PVIDEO_REQUEST_PACKET rp)
         if (rp->InputBufferLength < sizeof(ULONG)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
         if (!dx->mode_set) break;
         st = set_start(dx, *(ULONG *)rp->InputBuffer) ? NO_ERROR : ERROR_INVALID_PARAMETER;
+        break;
+    case IOCTL_WVB_SET_BANK:
+        if (rp->InputBufferLength < sizeof(ULONG)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
+        if (!dx->mode_set) break;
+        st = set_bank(dx, *(ULONG *)rp->InputBuffer) ? NO_ERROR : ERROR_INVALID_PARAMETER;
         break;
     case IOCTL_VIDEO_SET_COLOR_REGISTERS:
         set_palette(dx, rp->InputBuffer, rp->InputBufferLength);
@@ -1239,6 +1352,10 @@ static VP_STATUS NTAPI FindAdapter(PVOID hw, PVOID ctx, PWSTR arg, PVIDEO_PORT_C
 #endif
     dx->dac8 = reg_dword(dx, WVB_REG_DAC8, 1);
     dx->refpol = reg_dword(dx, WVB_REG_REFRESH, 0);
+    dx->access = reg_dword(dx, WVB_REG_ACCESS, 0);
+#ifdef TEST_ACCESS
+    dx->access = TEST_ACCESS;
+#endif
     dx->patchcmd[0] = 'A'; dx->patchcmd[1] = 'U'; dx->patchcmd[2] = 'T'; dx->patchcmd[3] = 'O'; dx->patchcmd[4] = 0;
     VideoPortGetRegistryParameters(dx, WVB_REG_PATCH, FALSE, reg_str_cb, dx->patchcmd);
     dbg("FindAdapter level %u cfglen %x\n", dx->level, ci->Length);

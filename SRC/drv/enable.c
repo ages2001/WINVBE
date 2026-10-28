@@ -60,12 +60,15 @@ extern DWORD __far __pascal GetProcAddress(WORD, LPSTR);
 
 
 DRVSTATE g;
+#ifndef TRACEMAX
+#define TRACEMAX 400
+#endif
 WORD trace_n;
 const char *trace_last;
 WORD trace_fn(const char *s)
 {
     trace_last = s;
-    if (g.debug > 2 && trace_n < 400) { trace_n++; dbg_printf(s); }
+    if (g.debug > 2 && trace_n < TRACEMAX) { trace_n++; dbg_printf(s); }
     return 0;
 }
 DWORD old_int2f;
@@ -953,7 +956,7 @@ SHORT EXPORT Control(LPVOID lpDev, WORD func, LPVOID lpIn, LPVOID lpOut)
         WORD i;
         far_memset(wi, 0, sizeof(WINVBEINFO));
         wi->size = sizeof(WINVBEINFO);
-        wi->version = 0x0100;
+        wi->version = 0x0110;
         wi->mode = g.mi.mode; wi->width = g.xres; wi->height = g.yres; wi->bpp = g.bpp;
         /* access: bit 7 = LFB unusable, 6 = write combining, 5 = shadow */
         wi->pitch = g.pitch; wi->access = g.access | (g.lfb_state == 2 ? 0x80 : 0) | (g.wc ? 0x40 : 0) |

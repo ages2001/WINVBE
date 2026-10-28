@@ -1,4 +1,4 @@
-; WINVBE v1.0 - Universal VESA/VGA/SVGA display driver
+; WINVBE v1.1 - Universal VESA/VGA/SVGA display driver
 ; OEMSETUP.INF for Windows 3.1 and Windows for Workgroups 3.1/3.11 Setup:
 ;   Display -> "Other display (Requires disk from OEM)" -> path of this folder
 ; All files Setup needs are in this folder - no Windows disks are needed.
@@ -10,15 +10,15 @@
 4 =. ,"Microsoft Windows 3.1 Disk #4",disk4
 5 =. ,"Microsoft Windows 3.1 Disk #5",disk5
 6 =. ,"Microsoft Windows 3.1 Disk #6",disk6
-W =. ,"WINVBE v1.0 Display Driver Disk",winvbe.drv
+W =. ,"WINVBE v1.1 Display Driver Disk",winvbe.drv
 
 [display]
 ;profile = driver, description, resolution, 286 grabber, logo code, VDD, 386 grabber, ega.sys, logo data, optional section
-winvbe   = W:winvbe.drv, "WINVBE v1.0 VESA, Auto Mode (Small fonts)", "100,96,96", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbe
-winvbe8  = W:winvbe.drv, "WINVBE v1.0 VESA, 256 Colors (Small fonts)", "100,96,96", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbe8
-winvbe16 = W:winvbe.drv, "WINVBE v1.0 VESA, 64K Colors (Small fonts)", "100,96,96", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbe16
-winvbe32 = W:winvbe.drv, "WINVBE v1.0 VESA, 16M Colors (Small fonts)", "100,96,96", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbe32
-winvbel  = W:winvbe.drv, "WINVBE v1.0 VESA, Auto Mode (Large fonts)", "100,120,120", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbel
+winvbe   = W:winvbe.drv, "WINVBE v1.1 VESA, Auto Mode (Small fonts)", "100,96,96", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbe
+winvbe8  = W:winvbe.drv, "WINVBE v1.1 VESA, 256 Colors (Small fonts)", "100,96,96", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbe8
+winvbe16 = W:winvbe.drv, "WINVBE v1.1 VESA, 64K Colors (Small fonts)", "100,96,96", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbe16
+winvbe32 = W:winvbe.drv, "WINVBE v1.1 VESA, 16M Colors (Small fonts)", "100,96,96", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbe32
+winvbel  = W:winvbe.drv, "WINVBE v1.1 VESA, Auto Mode (Large fonts)", "100,120,120", W:wvbcolor.2gr, , W:vddvga30.386, W:wvb30.3gr,, , winvbel
 
 ; file, destination, .ini file, section, old line, new line
 

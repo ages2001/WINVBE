@@ -1147,7 +1147,7 @@ int main(int argc, char **argv)
 {
     int i, w = -1, h = -1, d = -1, hz = 0, large = 0, list = 0, vga = 0, acc = 0, unattended = 0;
     char *s;
-    printf("WINVBE v1.0 Setup - Universal VESA/VGA/SVGA display driver for Windows 1.x-3.11\n\n");
+    printf("WINVBE v1.1 Setup - Universal VESA/VGA/SVGA display driver for Windows 1.x-3.11\n\n");
     strcpy(srcdir, argv[0]);
     s = strrchr(srcdir, '\\');
     if (s) s[1] = 0; else srcdir[0] = 0;

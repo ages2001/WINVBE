@@ -136,18 +136,18 @@ VARIANTS = {
 }
 for d, v in VARIANTS.items():
     prof = v.get('prof', PROF)
-    L = ['; WINVBE v1.0 - Universal VESA/VGA/SVGA display driver',
+    L = ['; WINVBE v1.1 - Universal VESA/VGA/SVGA display driver',
          '; OEMSETUP.INF for Windows %s Setup:' % (v['ver'] + (' and Windows for Workgroups 3.1/3.11' if v['ver'] == '3.1' else '')),
          ';   Display -> "Other display (Requires disk from OEM)" -> path of this folder',
          '; All files Setup needs are in this folder - no Windows disks are needed.',
          '',
          '[disks]'] + v['disks'] + [
-         'W =. ,"WINVBE v1.0 Display Driver Disk",winvbe.drv',
+         'W =. ,"WINVBE v1.1 Display Driver Disk",winvbe.drv',
          '',
          '[display]',
          ';profile = driver, description, resolution, 286 grabber, logo code, VDD, 386 grabber, ega.sys, logo data, optional section']
     for k, desc, r, dep, dpi in prof:
-        L.append('%-9s= W:winvbe.drv, "WINVBE v1.0 VESA, %s", "%s", %s, %s' % (k, desc, r, v['std'], k))
+        L.append('%-9s= W:winvbe.drv, "WINVBE v1.1 VESA, %s", "%s", %s, %s' % (k, desc, r, v['std'], k))
     L += ['', '; file, destination, .ini file, section, old line, new line']
     for k, desc, r, dep, dpi in prof:
         L += ['', '[%s]' % k,
@@ -166,7 +166,7 @@ for d, v in VARIANTS.items():
 RES9X = ['640,480', '800,600', '1024,768', '1152,864', '1280,720', '1280,768', '1280,800',
          '1280,960', '1280,1024', '1360,768', '1366,768', '1400,1050', '1440,900', '1600,900',
          '1600,1200', '1680,1050', '1920,1080', '1920,1200', '2048,1536', '2560,1440', '2560,1600']
-L = ['; WINVBE v1.0 - Universal VESA/VGA/SVGA display driver',
+L = ['; WINVBE v1.1 - Universal VESA/VGA/SVGA display driver',
      '; Windows 95/98/ME: Device Manager > Display adapters > (adapter) > Properties >',
      ';   Driver > Change Driver (Update Driver) > Have Disk > path of this folder',
      '',
@@ -180,7 +180,7 @@ L = ['; WINVBE v1.0 - Universal VESA/VGA/SVGA display driver',
      'WINVBE.CopyCF=10',
      '',
      '[SourceDisksNames]',
-     '1="WINVBE v1.0",,0',
+     '1="WINVBE v1.1",,0',
      '',
      '[SourceDisksFiles]',
      'winvbe.drv=1',

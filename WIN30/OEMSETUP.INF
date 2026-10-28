@@ -1,4 +1,4 @@
-; WINVBE v1.0 - Universal VESA/VGA/SVGA display driver
+; WINVBE v1.1 - Universal VESA/VGA/SVGA display driver
 ; OEMSETUP.INF for Windows 3.0 Setup:
 ;   Display -> "Other display (Requires disk from OEM)" -> path of this folder
 ; All files Setup needs are in this folder - no Windows disks are needed.
@@ -8,12 +8,12 @@
 2 =. ,"Microsoft Windows 3.0 Disk #2",vga850.fon
 3 =. ,"Microsoft Windows 3.0 Disk #3",vgacolor.gr2
 4 =. ,"Microsoft Windows 3.0 Disk #4",cga40woa.fon
-W =. ,"WINVBE v1.0 Display Driver Disk",winvbe.drv
+W =. ,"WINVBE v1.1 Display Driver Disk",winvbe.drv
 
 [display]
 ;profile = driver, description, resolution, 286 grabber, logo code, VDD, 386 grabber, ega.sys, logo data, optional section
-winvbe   = W:winvbe.drv, "WINVBE v1.0 VESA, Small fonts", "100,96,96", W:wvbcolor.gr2, W:wvblogo.lgo, x:*vddvga, W:wvb.gr3,, W:wvblogo.rle, winvbe
-winvbel  = W:winvbe.drv, "WINVBE v1.0 VESA, Large fonts", "100,120,120", W:wvbcolor.gr2, W:wvblogo.lgo, x:*vddvga, W:wvb.gr3,, W:wvblogo.rle, winvbel
+winvbe   = W:winvbe.drv, "WINVBE v1.1 VESA, Small fonts", "100,96,96", W:wvbcolor.gr2, W:wvblogo.lgo, x:*vddvga, W:wvb.gr3,, W:wvblogo.rle, winvbe
+winvbel  = W:winvbe.drv, "WINVBE v1.1 VESA, Large fonts", "100,120,120", W:wvbcolor.gr2, W:wvblogo.lgo, x:*vddvga, W:wvb.gr3,, W:wvblogo.rle, winvbel
 
 ; file, destination, .ini file, section, old line, new line
 
