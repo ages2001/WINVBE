@@ -7,7 +7,7 @@ import struct, sys
 
 NT31_VIDEOPRT = set(['VideoPortCompareMemory', 'VideoPortDisableInterrupt', 'VideoPortEnableInterrupt', 'VideoPortFreeDeviceBase', 'VideoPortGetDeviceBase', 'VideoPortGetDeviceData', 'VideoPortGetRegistryParameters', 'VideoPortInitialize', 'VideoPortInt10', 'VideoPortLogError', 'VideoPortMapMemory', 'VideoPortMoveMemory', 'VideoPortReadPortBufferUchar', 'VideoPortReadPortBufferUlong', 'VideoPortReadPortBufferUshort', 'VideoPortReadPortUchar', 'VideoPortReadPortUlong', 'VideoPortReadPortUshort', 'VideoPortReadRegisterBufferUchar', 'VideoPortReadRegisterBufferUlong', 'VideoPortReadRegisterBufferUshort', 'VideoPortReadRegisterUchar', 'VideoPortReadRegisterUlong', 'VideoPortReadRegisterUshort', 'VideoPortScanRom', 'VideoPortSetRegistryParameters', 'VideoPortSetTrappedEmulatorPorts', 'VideoPortStallExecution', 'VideoPortSynchronizeExecution', 'VideoPortUnmapMemory', 'VideoPortVerifyAccessRanges', 'VideoPortWritePortBufferUchar', 'VideoPortWritePortBufferUlong', 'VideoPortWritePortBufferUshort', 'VideoPortWritePortUchar', 'VideoPortWritePortUlong', 'VideoPortWritePortUshort', 'VideoPortWriteRegisterBufferUchar', 'VideoPortWriteRegisterBufferUlong', 'VideoPortWriteRegisterBufferUshort', 'VideoPortWriteRegisterUchar', 'VideoPortWriteRegisterUlong', 'VideoPortWriteRegisterUshort', 'VideoPortZeroMemory'])
 # NTOSKRNL.EXE imports checked against NT 3.1 (add new ones only after checking)
-NT31_NTOSKRNL = {'IoGetCurrentProcess', 'MmIsAddressValid'}
+NT31_NTOSKRNL = {"IoGetCurrentProcess", "MmIsAddressValid", "ZwOpenKey", "ZwSetValueKey", "ZwClose"}
 
 def main(p):
     d = open(p, 'rb').read()

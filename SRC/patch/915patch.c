@@ -245,7 +245,7 @@ int patch_run(int argc, char **argv)
     if (!is_386()) { say("Error: a 386 or newer CPU is needed.\n"); return 2; }
     if (windows_running()) {
         say("Error: run 915PATCH from DOS, before Windows is started.\n"
-            "Windows ME (no MS-DOS mode): use 915PATCH.VXD, see README.TXT.\n");
+            "Windows ME (no MS-DOS mode): use 915PATCH.VXD, see README.MD.\n");
         return 2;
     }
 #endif
@@ -409,7 +409,7 @@ int main(int argc, char **argv)
         strcat(path, "915PATCH.LOG");
         logf = fopen(path, "w");
     }
-    say("915PATCH - WINVBE v1.1 video BIOS mode patcher for Intel graphics\n\n");
+    say("915PATCH - WINVBE v1.2 video BIOS mode patcher for Intel graphics\n\n");
     rc = patch_run(argc, argv);
     if (logf) fclose(logf);
     return rc;

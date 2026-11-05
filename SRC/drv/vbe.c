@@ -378,6 +378,15 @@ static WORD dispi_id;
 static DWORD dispi_lfb;
 static WORD dispi_mem64k;
 
+/* the DirectDraw HAL (ddhal.c): can flips set the display start through
+   the Bochs/QEMU/VirtualBox DISPI registers (the virtual width is the
+   pitch of the screen) */
+int vbe_dispi_flip(void)
+{
+    if (!dispi_id || g.svga || !g.Bpp) return 0;
+    return (DWORD)dispi_rd(6) * g.Bpp == g.pitch;
+}
+
 static void outpd_(WORD port, DWORD v);
 #pragma aux outpd_ = "mov ax,cx" "shl eax,16" "mov ax,bx" "out dx,eax" parm [dx] [cx bx] modify [ax];
 static DWORD inpd_(WORD port);
@@ -500,12 +509,19 @@ static void dispi_probe(void)
 #define SVGA_REG_SYNC           21
 #define SVGA_REG_BUSY           22
 #define SVGA_REG_GUEST_ID       23
+#define SVGA_REG_CURSOR_ID      24
+#define SVGA_REG_CURSOR_X       25
+#define SVGA_REG_CURSOR_Y       26
+#define SVGA_REG_CURSOR_ON      27
 #define SVGA_REG_HOST_BPP       28
 #define SVGA_CAP_RECT_FILL      0x0001
 #define SVGA_CAP_RECT_COPY      0x0002
+#define SVGA_CAP_CURSOR         0x0020
+#define SVGA_CAP_CURSOR_BYPASS  0x0040
 #define SVGA_CMD_UPDATE         1
 #define SVGA_CMD_RECT_FILL      2
 #define SVGA_CMD_RECT_COPY      3
+#define SVGA_CMD_DEFINE_CURSOR  19
 #define FIFO_MIN 0
 #define FIFO_MAX 1
 #define FIFO_NEXT 2
@@ -519,6 +535,9 @@ static WORD  svga_fifosel;
 static DWORD svga_fmin, svga_fmax, svga_fnext;
 static BYTE  svga_fifo_on, svga_pending, svga_dirty, svga_accel;
 static BYTE  svga_verified;         /* the host draws with the geometry of our mode */
+static BYTE  svga_hwc_def;          /* the host has our cursor shape */
+static BYTE  svga_hwc_on;           /* ... and shows it */
+static SHORT svga_hwc_x = -1, svga_hwc_y = -1;
 static WORD  svga_retry;
 static SHORT svga_dl, svga_dt, svga_dr, svga_db;
 
@@ -666,6 +685,7 @@ int svga_copy(SHORT sx, SHORT sy, SHORT dx, SHORT dy, SHORT w, SHORT h)
 
 int svga_fill(DWORD color, SHORT x, SHORT y, SHORT w, SHORT h)
 {
+    if (lut_hc) color = lut_px(color);
     if (!g.svga || !svga_fifo_on || !svga_accel || !(svga_caps & SVGA_CAP_RECT_FILL) || g.in_background) return 0;
     if (!svga_verify()) return 0;
     svga_flush();
@@ -711,16 +731,99 @@ static int svga_set(void)
     f[FIFO_STOP] = svga_fmin;
     svga_wr(SVGA_REG_CONFIG_DONE, 1);
     svga_fifo_on = 1;
+    svga_hwc_def = svga_hwc_on = 0;     /* defined again for the new mode */
     svga_pending = svga_dirty = 0;
     svga_verified = 0;
     svga_retry = 0;
     return 1;
 }
 
+/* Hardware pointer (SVGA_CAP_CURSOR): the host draws the pointer over the
+   screen (VMware: with mouse integration it follows the host pointer
+   without lag; no save-under, no exclusion). Defined through the FIFO as a
+   1-bit AND mask and a 32-bit XOR image, positioned with the CURSOR_*
+   registers. [WINVBE] HwCursor=0: WINVBE's own pointer. */
+int svga_cursor_possible(void)
+{
+    return g.svga && svga_fifo_on && (svga_caps & SVGA_CAP_CURSOR) && (svga_caps & SVGA_CAP_CURSOR_BYPASS) &&
+           g.ini_hwcursor && !g.xf;
+}
+
+int svga_cursor_defined(void)
+{
+    return svga_hwc_def;
+}
+
+/* does the host invert where the AND and XOR bits are both set? VMware
+   does; QEMU's vmware-svga (no SVGA_CAP_EXTENDED_FIFO) leaves those
+   pixels out, which would hide the I-beam */
+int svga_cursor_inverts(void)
+{
+    return (svga_caps & 0x8000UL) != 0;
+}
+
+/* w, h <= 64; px(x, y, &xor) gives a pixel: returns its AND bit, sets its
+   XOR value (0x00RRGGBB) */
+int svga_cursor_define(WORD hx, WORD hy, WORD w, WORD h, SVGA_CURPX px)
+{
+    DWORD __far *f = (DWORD __far *)MK_FP(svga_fifosel, 0);
+    WORD aw = (w + 31) / 32, i;
+    DWORD n = 7 + (DWORD)aw * h + (DWORD)w * h;
+    if (!svga_cursor_possible() || g.in_background || w > 64 || h > 64) return 0;
+    if (n * 4 + 16 > svga_fmax - svga_fmin) return 0;
+    svga_flush();
+    svga_sync();                        /* the FIFO is empty: room for all of it */
+#define PUT(v) do { f[(WORD)(svga_fnext >> 2)] = (v); svga_fnext += 4; \
+                    if (svga_fnext >= svga_fmax) svga_fnext = svga_fmin; } while (0)
+    PUT(SVGA_CMD_DEFINE_CURSOR); PUT(0); PUT(hx); PUT(hy); PUT(w); PUT(h); PUT(1); PUT(32);
+    for (i = 0; i < h; i++) {           /* AND mask: bit 7 of byte 0 = left */
+        WORD x, k;
+        for (k = 0; k < aw; k++) {
+            DWORD v = 0;
+            for (x = 0; x < 32; x++) {
+                DWORD xo;
+                if (k * 32 + x >= w || px(k * 32 + x, i, &xo)) v |= 1UL << ((x & ~7) + 7 - (x & 7));
+            }
+            PUT(v);
+        }
+    }
+    for (i = 0; i < h; i++) {
+        WORD x;
+        for (x = 0; x < w; x++) { DWORD xo; px(x, i, &xo); PUT(xo); }
+    }
+#undef PUT
+    f[FIFO_NEXT] = svga_fnext;
+    svga_sync();
+    svga_hwc_def = 1;
+    svga_hwc_x = svga_hwc_y = -1;
+    DBG("SVGA II pointer %ux%u hot %u,%u\n", w, h, hx, hy);
+    return 1;
+}
+
+/* the hotspot at (x, y), shown or not */
+void svga_cursor_move(SHORT x, SHORT y, BYTE on)
+{
+    if (!svga_port || !g.svga || !svga_hwc_def) return;
+    if (g.in_background) on = 0;
+    if (on && (x != svga_hwc_x || y != svga_hwc_y)) {
+        svga_wr(SVGA_REG_CURSOR_ID, 0);
+        svga_wr(SVGA_REG_CURSOR_X, (DWORD)(LONG)x);
+        svga_wr(SVGA_REG_CURSOR_Y, (DWORD)(LONG)y);
+        svga_hwc_x = x; svga_hwc_y = y;
+        svga_hwc_on = 0;                /* (re)show with the new position */
+    }
+    if (on != svga_hwc_on) {
+        svga_wr(SVGA_REG_CURSOR_ID, 0);
+        svga_wr(SVGA_REG_CURSOR_ON, on ? 1 : 0);
+        svga_hwc_on = on;
+    }
+}
+
 /* leave the SVGA mode (the VGA takes the screen again) */
 void svga_off(void)
 {
     if (!svga_port || !g.svga) return;
+    svga_cursor_move(0, 0, 0);
     if (svga_fifo_on) svga_sync();
     svga_wr(SVGA_REG_ENABLE, 0);
     svga_verified = 0;
@@ -954,7 +1057,7 @@ static void set_dispi(MODEINFO *m, WORD w, WORD h, WORD bpp)
  *   Access=0 auto, 1 LFB only, 2 banked only
  *   Dispi=0/1    allow Bochs/QEMU/VirtualBox DISPI custom resolutions
  */
-int vbe_select_mode(void)
+static int select_mode(void)
 {
     WORD i, best = 0xFFFF;
     DWORD bestscore = 0xFFFFFFFFUL;
@@ -1024,6 +1127,82 @@ int vbe_select_mode(void)
     g.mi = modes[best];
     DBG("select: mode %x %ux%ux%u (wanted %ux%ux%u)\n", g.mi.mode, g.mi.xres, g.mi.yres, g.mi.bpp, w, h, d);
     return 1;
+}
+
+/* the desktop GDI gets: turned (Rotate=90/180/270) on the chosen mode, or
+   (Scale=1 aspect kept, 2 full screen) the chosen resolution shown scaled
+   on the native mode of the panel (EDID). Both need the shadow frame
+   buffer's conditions (a 386, protected mode, enhanced mode or Windows 9x),
+   8 bpp or more and not VMware SVGA II; DirectDraw and the DIB engine are
+   then off. */
+static void plan_desktop(void)
+{
+    g.xf = 0; g.rot = 0;
+    g.lw = g.mi.xres; g.lh = g.mi.yres;
+#ifndef OLDWIN
+    if ((!g.ini_rotate && !g.ini_scale) || g.mi.bpp < 8 || g.mi.mode == 0xFFFE || g.mi.mode == 0x13 ||
+        !g.ini_shadow || !g.pmode || !g.cpu386 || !(g.enhanced || g.win9x))
+        return;
+    if (g.ini_rotate) {
+        g.xf = 1; g.rot = g.ini_rotate;
+        if (g.rot & 1) { g.lw = g.mi.yres; g.lh = g.mi.xres; }
+    } else if (g.have_edid && g.edid_w > g.mi.xres && g.edid_h >= g.mi.yres) {
+        MODEINFO want = g.mi;
+        WORD rw = g.req_w, rh = g.req_h, rm = g.req_mode;
+        g.req_w = g.edid_w; g.req_h = g.edid_h; g.req_mode = 0; g.req_bpp = want.bpp;
+        select_mode();
+        g.req_w = rw; g.req_h = rh; g.req_mode = rm;
+        if (g.mi.xres != g.edid_w || g.mi.yres != g.edid_h || g.mi.bpp != want.bpp || g.mi.mode == 0xFFFE) {
+            g.mi = want;
+            return;
+        }
+        g.xf = 2;
+        g.lw = want.xres; g.lh = want.yres;
+        g.sdw = g.mi.xres; g.sdh = g.mi.yres;
+        if (g.ini_scale == 1) {                 /* aspect ratio kept */
+            if ((DWORD)g.lw * g.mi.yres > (DWORD)g.lh * g.mi.xres)
+                g.sdh = (WORD)((DWORD)g.lh * g.mi.xres / g.lw);
+            else
+                g.sdw = (WORD)((DWORD)g.lw * g.mi.yres / g.lh);
+        }
+        g.sdx = (g.mi.xres - g.sdw) / 2;
+        g.sdy = (g.mi.yres - g.sdh) / 2;
+    }
+    DBG("desk %ux%u xf %u %u\n", g.lw, g.lh, g.xf, g.rot);
+#endif
+}
+
+int vbe_select_mode(void)
+{
+    WORD d = g.req_bpp;
+    select_mode();
+    g.req_bpp = d;
+    plan_desktop();
+    g.req_bpp = d;
+    return 1;
+}
+
+/* Windows 9x Display Properties (ValidateMode): can the mode be set?
+   0 yes, 2 not enough video memory, 4 no */
+WORD vbe_mode_ok(WORD w, WORD h, WORD bpp)
+{
+    WORD i;
+    DWORD need = (DWORD)w * ((bpp + 7) >> 3) * h;
+    if (bpp != 8 && bpp != 15 && bpp != 16 && bpp != 24 && bpp != 32) return 4;
+    if (w < 320 || h < 200) return 4;
+    for (i = 0; i < nmodes; i++) {
+        MODEINFO *m = &modes[i];
+        if (m->xres != w || m->yres != h) continue;
+        if (m->bpp != bpp && !(bpp == 24 && m->bpp == 32) && !(bpp == 15 && m->bpp == 16)) continue;
+        if (!mode_lfb_ok(m) && !mode_banked_ok(m)) continue;
+        if (g.totalmem64k && (DWORD)m->lpitch * m->yres > (DWORD)g.totalmem64k * 65536UL) return 2;
+        return 0;
+    }
+    if (svga_port && (bpp == 32 || bpp == 24) && (!svga_maxw || w <= svga_maxw) && (!svga_maxh || h <= svga_maxh))
+        return (DWORD)w * 4 * h <= svga_vram ? 0 : 2;
+    if (dispi_id && g.use_dispi && w <= 4096 && h <= 4096)
+        return need <= (DWORD)dispi_mem64k * 65536UL ? 0 : 2;
+    return 4;
 }
 
 /* ---------------- refresh rate (VBE 3.0 CRTC) -------------------------- */
@@ -1160,6 +1339,44 @@ static WORD win_sel(WORD seg)
     return s;
 }
 
+/* DPMI 0301h: call a real mode procedure (far return) */
+static int dpmi_callrm(RMREGS FAR *r);
+#pragma aux dpmi_callrm = \
+    "push es" \
+    "mov es,dx" \
+    "mov ax,0301h" \
+    "xor bh,bh" \
+    "xor cx,cx" \
+    "int 31h" \
+    "sbb ax,ax" \
+    "pop es" \
+    parm [dx di] value [ax] modify [bx cx];
+
+/* Windows 3.x standard mode: is "real mode" really V86 mode under a memory
+   manager (EMM386, QEMM, JEMM386/JEMMEX, 386MAX)?  Then DOSX runs as its
+   VCPI client, and the address DPMI 0800h returns for a frame buffer above
+   the RAM is not mapped in DOSX's page tables: the first access to the
+   LFB ended Windows (back at the DOS prompt, GitHub issue #2). SMSW in V86
+   mode shows the PE bit. */
+static int v86_monitor(void)
+{
+    static BYTE known, result;
+    LPBYTE code;
+    if (known) return result;
+    known = 1;
+    if (!g.pmode || g.enhanced || g.win9x || !g.cpu386) return 0;
+    code = (LPBYTE)MK_FP(g.dosbuf_sel, 4096 - 16);
+    code[0] = 0x0F; code[1] = 0x01; code[2] = 0xE0;     /* smsw ax */
+    code[3] = 0xCB;                                     /* retf */
+    rclear();
+    rmr.eax = 0;
+    rmr.cs = g.dosbuf_seg; rmr.ip = 4096 - 16;
+    if (dpmi_callrm((RMREGS FAR *)&rmr)) return 0;
+    result = (BYTE)(rmr.eax & 1);
+    DBG("standard mode: real mode MSW=%x -> %s\n", (WORD)rmr.eax, result ? "V86 (VCPI client)" : "real mode");
+    return result;
+}
+
 static int setup_lfb(void)
 {
     DWORD lin, size = g.fbsize;
@@ -1170,8 +1387,19 @@ static int setup_lfb(void)
     if (g.totalmem64k && size > (DWORD)g.totalmem64k * 65536UL) size = (DWORD)g.totalmem64k * 65536UL;
     if (size < g.fbsize) size = g.fbsize;
     size = (size + 0xFFFFUL) & 0xFFFF0000UL;
-    if (g.lfbsel && g.lfblin) return 1;      /* already mapped (re-enable) */
+    if (g.lfbsel && g.lfblin) {
+        /* already mapped (re-enable); a bigger mode (Windows 9x ReEnable):
+           a new mapping */
+        if (((DWORD)g.lfbtiles << 16) >= size) return 1;
+        sel_free(g.lfbsel, g.lfbtiles);
+        g.lfbsel = 0; g.lfblin = 0; g.lfbtiles = 0;
+    }
     if (g.lfb_state == 2) return 0;
+    if (v86_monitor() && !get_ini_int("LfbVcpi", 0)) {
+        DBG("LFB: standard mode under a V86 memory manager - using the VGA window\n");
+        g.lfb_state = 2;
+        return 0;
+    }
     {   /* SYSTEM.INI LfbAddr=0xE0000000 overrides the address reported by the BIOS */
         char b[16];
         get_ini_str("LfbAddr", "", b, sizeof(b));
@@ -1599,6 +1827,11 @@ void vbe_set_dac(WORD start, WORD count, const BYTE *rgbx)
     WORD i;
     BYTE shift = 8 - g.dacbits;
     if (!g.palettized) return;
+    if (lut_on) {                           /* colour correction (surf.c), in a row buffer */
+        if (count > 256) count = 256;
+        for (i = 0; i < count * 4; i++) bufT[i] = (i & 3) == 3 ? rgbx[i] : lutc[i & 3][rgbx[i]];
+        rgbx = bufT;
+    }
     if (g.mi.mode == 0x13 || g.mi.mode == 0xFFFF || !(g.vbecaps_lo & 0x02)) {
         /* VGA compatible DAC */
         outp(0x3C8, (BYTE)start);
@@ -1765,6 +1998,16 @@ int vbe_repost(void)
 #endif
 
 /* map resources for the selected mode before GDI asks for GDIINFO */
+/* can the selected mode run on the linear frame buffer (DIB engine mode) */
+int vbe_lfb_possible(void)
+{
+    if (g.mi.mode == 0x13 || g.mi.bpp < 8 || g.req_access == 2 || g.lfb_state == 2) return 0;
+    if (!mode_lfb_ok(&g.mi)) return 0;
+    g.fbsize = (DWORD)g.mi.lpitch * g.mi.yres;
+    if ((DWORD)g.mi.pitch * g.mi.yres > g.fbsize) g.fbsize = (DWORD)g.mi.pitch * g.mi.yres;
+    return setup_lfb();
+}
+
 int vbe_prepare(void)
 {
     if (g.mi.mode == 0x13) return 1;

@@ -180,3 +180,4 @@ EXPORTS
   XLATEOBJ_hGetColorTransform
   XLATEOBJ_iXlate
   XLATEOBJ_piVector
+  WNDOBJ_vSetConsumer

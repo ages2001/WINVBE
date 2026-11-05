@@ -45,7 +45,8 @@ void WINAPI start(void)
     wc.lpfnWndProc = DefWindowProc; wc.hInstance = hi; wc.lpszClassName = "GLTEST";
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     RegisterClass(&wc);
-    hwnd = CreateWindow("GLTEST", "OpenGL test", WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
+    /* topmost: the test shows above the program that started it */
+    hwnd = CreateWindowEx(WS_EX_TOPMOST, "GLTEST", "OpenGL test", WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
                         40, 40, 400, 300, NULL, NULL, hi, NULL);
     dc = GetDC(hwnd);
     memset(&pfd, 0, sizeof(pfd));
@@ -82,6 +83,15 @@ void WINAPI start(void)
     }
     logf_("%d frames in %lu ms (%lu per second), glGetError %u\n", frames, t, t ? (DWORD)frames * 1000UL / t : 0,
           glGetError());
+    {   /* WINVBE's NT display driver: its OpenGL counters (NT 3.5x/4.0) */
+        DWORD st[8], q = 0x7746;
+        int r = ExtEscape(dc, QUERYESCSUPPORT, sizeof(q), (LPCSTR)&q, 0, NULL) > 0 ?
+                ExtEscape(dc, 0x7746, 0, NULL, sizeof(st), (LPSTR)st) : 0;
+        if (r > 0)
+            logf_("display driver (%s): SetPixelFormat %lu, windows %lu, buffers %lu, swaps %lu shown %lu, "
+                  "no buffer %lu, lock failed %lu, DescribePixelFormat %lu\n", r == 1 ? "OpenGL on" : "OpenGL off",
+                  st[0], st[1], st[2], st[3], st[4], st[5], st[6], st[7]);
+    }
     Sleep(3000);
     wglMakeCurrent(NULL, NULL);
     wglDeleteContext(rc);

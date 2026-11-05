@@ -2,6 +2,7 @@
 #include "winvbecf.h"
 
 IDI_APP ICON winvbecf.ico
+IDI_UNINST ICON winvbeun.ico
 
 IDD_MAIN DIALOG 8, 8, 292, 224
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX
@@ -29,7 +30,9 @@ BEGIN
     LTEXT           "Font size:", -1, 158, 145, 40, 8
     CONTROL         "Small (96 dpi)", IDC_SMALL, "Button", BS_AUTORADIOBUTTON | WS_GROUP | WS_TABSTOP, 202, 144, 80, 10
     CONTROL         "Large (120 dpi)", IDC_LARGE, "Button", BS_AUTORADIOBUTTON, 202, 155, 80, 10
-    CONTROL         "Debug log", IDC_DEBUG, "Button", BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP, 158, 172, 80, 10
+    CONTROL         "Debug log", IDC_DEBUG, "Button", BS_AUTOCHECKBOX | WS_GROUP | WS_TABSTOP, 158, 172, 50, 10
+    PUSHBUTTON      "Co&lors...", IDC_COLORS, 208, 170, 36, 14
+    PUSHBUTTON      "&Mouse...", IDC_MOUSE, 246, 170, 36, 14
     LTEXT           "", IDC_CURRENT, 8, 192, 278, 9
     CONTROL         "Use WINVBE as the display driver", IDC_ENABLE, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 206, 124, 10
     PUSHBUTTON      "&About", IDC_ABOUT, 136, 204, 40, 14
@@ -44,9 +47,53 @@ FONT 8, "Helv"
 BEGIN
     ICON            IDI_APP, -1, 10, 10, 18, 20
     LTEXT           "WINVBE Universal VESA/VGA/SVGA Display Driver", -1, 40, 10, 190, 9
-    LTEXT           "Version 1.1", -1, 40, 21, 190, 9
+    LTEXT           "Version 1.2", -1, 40, 21, 190, 9
     LTEXT           "For Windows 3.0, 3.1, Windows for Workgroups 3.1x and Windows 95, 98 and ME.", -1, 40, 36, 190, 18
     LTEXT           "VBE 1.2 - 3.0 BIOSes with linear or banked frame buffers, 8/15/16/24/32 bits per pixel, EDID monitor detection, VBE 3.0 refresh rates and custom resolutions on Bochs, QEMU and VirtualBox.", -1, 40, 56, 190, 36
     LTEXT           "Large fonts: glyphs derived from DejaVu (Bitstream Vera licence).", -1, 40, 94, 190, 18
     DEFPUSHBUTTON   "OK", IDOK, 93, 118, 50, 14
+END
+
+IDD_MOUSE DIALOG 20, 16, 252, 172
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "WINVBE Mouse"
+FONT 8, "Helv"
+BEGIN
+    LTEXT           "Pointer speed:", -1, 8, 6, 74, 8
+    LISTBOX         IDC_MSPEED, 8, 16, 74, 52, WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    LTEXT           "Double-click speed:", -1, 90, 6, 74, 8
+    LISTBOX         IDC_MDBL, 90, 16, 74, 34, WS_BORDER | WS_TABSTOP
+    LTEXT           "Pointer color:", -1, 172, 6, 74, 8
+    LISTBOX         IDC_MCOLOR, 172, 16, 74, 76, WS_VSCROLL | WS_BORDER | WS_TABSTOP
+    CONTROL         "Swap left and right buttons", IDC_MSWAP, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 78, 150, 10
+    CONTROL         "Large pointer", IDC_MLARGE, "Button", BS_AUTOCHECKBOX | WS_TABSTOP, 8, 92, 150, 10
+    LTEXT           "", IDC_MNOTE, 8, 112, 238, 28
+    DEFPUSHBUTTON   "OK", IDOK, 140, 150, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 196, 150, 50, 14
+END
+
+IDD_COLOR DIALOG 20, 16, 252, 212
+STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "WINVBE Colors and Screen"
+FONT 8, "Helv"
+BEGIN
+    LTEXT           "Gamma:", -1, 8, 10, 44, 8
+    SCROLLBAR       IDC_CGAMMA, 54, 9, 156, 10, WS_TABSTOP
+    LTEXT           "", IDC_CGAMMAV, 214, 10, 32, 8
+    LTEXT           "Brightness:", -1, 8, 26, 44, 8
+    SCROLLBAR       IDC_CBRIGHT, 54, 25, 156, 10, WS_TABSTOP
+    LTEXT           "", IDC_CBRIGHTV, 214, 26, 32, 8
+    LTEXT           "Contrast:", -1, 8, 42, 44, 8
+    SCROLLBAR       IDC_CCONTR, 54, 41, 156, 10, WS_TABSTOP
+    LTEXT           "", IDC_CCONTRV, 214, 42, 32, 8
+    CONTROL         "", IDC_CPREVIEW, "Button", BS_OWNERDRAW | WS_DISABLED, 8, 58, 236, 44
+    LTEXT           "", IDC_CNOTE, 8, 106, 236, 28
+    LTEXT           "&Turn the screen:", -1, 8, 142, 70, 8
+    COMBOBOX        IDC_CROTATE, 80, 140, 164, 60, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT           "&Small resolutions:", -1, 8, 158, 70, 8
+    COMBOBOX        IDC_CSCALE, 80, 156, 164, 50, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT           "Turning and scaling take effect when Windows is started again.", -1, 8, 174, 236, 8
+    PUSHBUTTON      "&Defaults", IDC_CDEFAULT, 8, 190, 50, 14
+    DEFPUSHBUTTON   "OK", IDOK, 140, 190, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 196, 190, 50, 14
 END

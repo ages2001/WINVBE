@@ -1,5 +1,6 @@
 #!/bin/sh
-# Build everything: WINVBE.DRV (3.x, 2.x, 1.x), WINVBE.386, WINVBECF.EXE, WVBPOWER.SCR,
+# Build everything: WINVBE.DRV (3.x, 2.x, 1.x), WVBDD32.DLL (9x DirectDraw/Direct3D HAL), WVBGL32.DLL (OpenGL ICD,
+# needs the Mesa 7.8.2 sources in gl/mesa-src, see gl/build.sh), WINVBE.386, WINVBECF.EXE, WVBPOWER.SCR,
 # INSTALL.EXE, 915PATCH.EXE, 915PATCH.VXD, GDITEST.EXE and the Windows NT
 # drivers (nt/build.sh).
 # Requires Open Watcom 2 (set WATCOM), NASM and Python 3; for NT mingw-w64.
@@ -12,6 +13,10 @@ sh cfg/build.sh
 sh patch/build.sh
 sh vxd/build.sh
 sh nt/build.sh
+sh dd9x/build.sh
+sh gl/build.sh
+sh gl/build.sh sse2
+sh gl/build.sh x64
 sh test/build.sh
 mkdir -p bin
 python3 tools/mkfon.py bin
@@ -19,6 +24,14 @@ cp drv/obj/winvbe.drv bin/WINVBE.DRV
 mkdir -p bin/WIN30 bin/WIN9X
 cp drv/obj/winvbe30.drv bin/WIN30/WINVBE.DRV
 cp drv/obj/winvbe9x.drv bin/WIN9X/WINVBE.DRV
+cp dd9x/obj/wvbdd32.dll bin/WIN9X/WVBDD32.DLL
+cp gl/obj/wvbgl32.dll bin/WVBGL32.DLL
+cp gl/obj/wvbglx.dll bin/WVBGLX.DLL
+cp gl/objsse/wvbgls.dll bin/WVBGLS.DLL
+cp gl/obj/nt3x/opengl32.dll bin/NT3X-OPENGL32.DLL
+cp gl/obj/wvgdi.dll bin/WVGDI.DLL
+cp gl/obj/gl31pat.exe bin/GL31PAT.EXE
+cp gl/obj64/wvbgl32.dll bin/WVBGL64.DLL
 cp cfg/obj/winvbecf.exe bin/WINVBECF.EXE
 cp cfg/obj/wvbpower.scr bin/WVBPOWER.SCR
 cp cfg/obj/install.exe bin/INSTALL.EXE
@@ -31,6 +44,9 @@ cp nt/obj/i386/winvbe.sys nt/obj/i386/winvbecf.exe bin/NT/I386/NT3X/
 cp nt/obj/i386/winvbe3.dll bin/NT/I386/NT3X/winvbe.dll
 cp nt/obj/i386/winvbe.sys nt/obj/i386/winvbe.dll nt/obj/i386/winvbecf.exe bin/NT/I386/NT4-XP/
 cp nt/obj/amd64/winvbe.sys nt/obj/amd64/winvbe.dll nt/obj/amd64/winvbecf.exe bin/NT/AMD64/
+mkdir -p bin/NONPNP/I386 bin/NONPNP/AMD64
+cp nt/obj/i386/vga.sys bin/NONPNP/I386/
+cp nt/obj/amd64/vga.sys bin/NONPNP/AMD64/
 mkdir -p bin/WIN2X bin/WIN1X
 cp drv/obj2/winvbe2.drv bin/WIN2X/WINVBE.DRV
 cp drv/obj2/winvbe.lgo bin/WIN2X/WINVBE.LGO

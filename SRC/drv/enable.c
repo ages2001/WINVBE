@@ -60,6 +60,9 @@ extern DWORD __far __pascal GetProcAddress(WORD, LPSTR);
 
 
 DRVSTATE g;
+#ifndef WIN9X_DPVER
+#define WIN9X_DPVER 0x30A
+#endif
 #ifndef TRACEMAX
 #define TRACEMAX 400
 #endif
@@ -103,6 +106,88 @@ static WORD parse_num(char __far **pp)
     return v;
 }
 
+/* Windows 9x VDD: the display configuration USER is changing to (Display
+   Properties writes the new colour depth to the registry only after the
+   driver has switched) - VDD_GET_DISPLAY_CONFIG through the VDD's API */
+typedef struct {
+    WORD  diHdrSize;
+    WORD  diInfoFlags;
+    DWORD diDevNodeHandle;
+    char  diDriverName[16];
+    WORD  diXRes;
+    WORD  diYRes;
+    WORD  diDPI;
+    BYTE  diPlanes;
+    BYTE  diBpp;
+    WORD  diRefreshRateMax;
+    WORD  diRefreshRateMin;
+    WORD  diLowHorz;
+    WORD  diHighHorz;
+    WORD  diLowVert;
+    WORD  diHighVert;
+    DWORD diMonitorDevNodeHandle;
+    BYTE  diHorzSyncPolarity;
+    BYTE  diVertSyncPolarity;
+} DISPLAYINFO;
+
+static DWORD vdd_entry;
+static WORD vdd_vmid;
+
+static DWORD get_vxd_entry(WORD id);
+#pragma aux get_vxd_entry = \
+    "push es" \
+    "push di" \
+    "xor di,di" \
+    "mov es,di" \
+    "mov ax,1684h" \
+    "int 2Fh" \
+    "mov dx,es" \
+    "mov ax,di" \
+    "pop di" \
+    "pop es" \
+    parm [bx] value [dx ax];
+static WORD get_vmid(void);
+#pragma aux get_vmid = "mov ax,1683h" "int 2Fh" value [bx] modify [ax];
+
+static DWORD vdd_call(WORD fn, WORD size, LPVOID buf);
+#pragma aux vdd_call = \
+    ".386" \
+    "push es" \
+    "push edi" \
+    "push ebx" \
+    "mov es,dx" \
+    "movzx edi,di" \
+    "movzx eax,ax" \
+    "movzx ecx,cx" \
+    "movzx ebx,vdd_vmid" \
+    "xor edx,edx" \
+    "call dword ptr vdd_entry" \
+    "pop ebx" \
+    "pop edi" \
+    "pop es" \
+    "mov edx,eax" \
+    "shr edx,16" \
+    parm [ax] [cx] [dx di] value [dx ax] modify [cx];
+
+static int vdd_display_config(WORD *w, WORD *h, WORD *bpp)
+{
+    DISPLAYINFO di;
+    DWORD r;
+    if (!vdd_entry) {
+        vdd_entry = get_vxd_entry(0x000A);
+        vdd_vmid = get_vmid();
+    }
+    if (!vdd_entry) return 0;
+    far_memset(&di, 0, sizeof(di));
+    di.diHdrSize = sizeof(di);
+    r = vdd_call(0x85, sizeof(di), (LPVOID)&di);
+    DBG("VDD display config: %lx flags %x %ux%ux%u\n", r, di.diInfoFlags, di.diXRes, di.diYRes, di.diBpp);
+    if (r) return 0;
+    if (!(di.diInfoFlags & 0x10) && di.diXRes >= 320 && di.diYRes >= 200) { *w = di.diXRes; *h = di.diYRes; }
+    if (!(di.diInfoFlags & 0x08)) *bpp = di.diBpp;
+    return 1;
+}
+
 static void win9x_settings(void)
 {
     WORD hk = GetModuleHandle((LPSTR)"KERNEL");
@@ -134,6 +219,13 @@ static void win9x_settings(void)
         if (bpp == 8 || bpp == 15 || bpp == 16 || bpp == 24 || bpp == 32) g.req_bpp = bpp;
     }
     rc(key);
+    {   /* what USER is changing to (ReEnable: newer than the registry) */
+        WORD vw = g.req_w, vh = g.req_h, vb = g.req_bpp;
+        if (vdd_display_config(&vw, &vh, &vb)) {
+            if (vw >= 320 && vh >= 200 && (vw != g.req_w || vh != g.req_h)) { g.req_w = vw; g.req_h = vh; g.req_mode = 0; }
+            if (vb == 8 || vb == 15 || vb == 16 || vb == 24 || vb == 32) g.req_bpp = vb;
+        }
+    }
     DBG("Windows 9x settings: %ux%ux%u\n", g.req_w, g.req_h, g.req_bpp);
 }
 #endif
@@ -198,8 +290,18 @@ static void driver_init(void)
     g.ini_repost = (BYTE)get_ini_int("Repost", 1);
     g.ini_vmaccel = (BYTE)get_ini_int("VMwareAccel", 1);
     g.ini_vmfifo = (BYTE)get_ini_int("VMwareFifo", 1);
+    g.ini_hwcursor = (BYTE)get_ini_int("HwCursor", 1);
     g.ini_shadow = (BYTE)get_ini_int("ShadowBuffer", 1);
+    g.ini_dibeng = (BYTE)get_ini_int("DibEngine", 1);
     g.ini_wc = (BYTE)get_ini_int("WriteCombining", 1);
+    g.ini_opengl = (BYTE)get_ini_int("OpenGL", 1);
+    {
+        WORD r = get_ini_int("Rotate", 0);
+        g.ini_rotate = (BYTE)(r == 90 ? 1 : r == 180 ? 2 : r == 270 ? 3 : 0);
+        g.ini_scale = (BYTE)get_ini_int("Scale", 0);
+        if (g.ini_scale > 2) g.ini_scale = 0;
+    }
+    lut_build(get_ini_int("Gamma", 100), (SHORT)get_ini_int("Brightness", 0), get_ini_int("Contrast", 100));
 #ifndef OLDWIN
     win9x_settings();
     if (g.win9x) g.dpi = 0;     /* Windows 9x: follow the font size of the control panel */
@@ -261,21 +363,21 @@ static void fill_gdiinfo(LPGDIINFO gi)
 {
     WORD hs, vs;
     far_memset(gi, 0, GDIINFO_SIZE);
-    hs = (WORD)((DWORD)g.mi.xres * 254UL / ((DWORD)g.dpi * 10UL));
-    vs = (WORD)((DWORD)g.mi.yres * 254UL / ((DWORD)g.dpi * 10UL));
+    hs = (WORD)((DWORD)g.lw * 254UL / ((DWORD)g.dpi * 10UL));
+    vs = (WORD)((DWORD)g.lh * 254UL / ((DWORD)g.dpi * 10UL));
     if (!hs) hs = 1;
     if (!vs) vs = 1;
 #ifdef OLDWIN
     gi->dpVersion = (g.winver & 0xFF) >= 2 ? 0x200 : 0x100;
 #else
     /* GDI of Windows 95/98/ME only accepts Windows 3.1 (and later) drivers */
-    gi->dpVersion = g.win9x ? 0x30A : 0x300;
+    gi->dpVersion = g.win9x ? WIN9X_DPVER : 0x300;
 #endif
     gi->dpTechnology = 1;           /* DT_RASDISPLAY */
     gi->dpHorzSize = hs;
     gi->dpVertSize = vs;
-    gi->dpHorzRes = g.mi.xres;
-    gi->dpVertRes = g.mi.yres;
+    gi->dpHorzRes = g.lw;
+    gi->dpVertRes = g.lh;
     gi->dpBitsPixel = g.mi.Bpp == 2 ? 16 : g.mi.Bpp * 8;
     gi->dpPlanes = 1;
     gi->dpNumBrushes = -1;
@@ -302,8 +404,8 @@ static void fill_gdiinfo(LPGDIINFO gi)
     gi->dpAspectY = 36;
     gi->dpAspectXY = 51;
     gi->dpStyleLen = 72;
-    set_ratio(&gi->dpMLoWin, &gi->dpMLoVpt, (DWORD)hs * 10, g.mi.xres, (DWORD)vs * 10, g.mi.yres);
-    set_ratio(&gi->dpMHiWin, &gi->dpMHiVpt, (DWORD)hs * 100, g.mi.xres, (DWORD)vs * 100, g.mi.yres);
+    set_ratio(&gi->dpMLoWin, &gi->dpMLoVpt, (DWORD)hs * 10, g.lw, (DWORD)vs * 10, g.lh);
+    set_ratio(&gi->dpMHiWin, &gi->dpMHiVpt, (DWORD)hs * 100, g.lw, (DWORD)vs * 100, g.lh);
     set_ratio(&gi->dpELoWin, &gi->dpELoVpt, (DWORD)g.dpi, 100, (DWORD)g.dpi, 100);
     {
         /* english: units of 1/100 inch -> dpi/100 pixels per unit */
@@ -315,6 +417,16 @@ static void fill_gdiinfo(LPGDIINFO gi)
     gi->dpLogPixelsY = g.dpi;
     gi->dpDCManage = 4;
 #ifndef OLDWIN
+    /* Windows 9x: C1_REINIT_ABLE - ReEnable changes the resolution. Without
+       it USER takes WINVBE for a Windows 3.1 driver: Display Properties
+       offered only the current mode, and DirectDraw could not switch */
+    /* C1_GAMMA_RAMP (0x0020): GammaRamp */
+    if (g.win9x) gi->dpCaps1 = 0x0080 | 0x0020;
+#endif
+#ifndef OLDWIN
+    if (dibeng_on) dibeng_gdiinfo(gi);
+#endif
+#ifndef OLDWIN
     if (g.mi.Bpp == 1) {
         gi->dpPalColors = 256;
         gi->dpPalReserved = 20;
@@ -324,6 +436,58 @@ static void fill_gdiinfo(LPGDIINFO gi)
 }
 
 /* ------------------------------------------------------------------ */
+/* Windows 3.0: USER picks the image of an icon or cursor resource by
+   comparing its color count with 1 << (bits per pixel * planes), a 16-bit
+   shift: 1 at 32 bpp and 0 at 16 or 24 bpp, so it takes the 2 or 8 color
+   images (black and white Program Manager icons). USER keeps that product
+   in its data segment at 6FEh, next to LOGPIXELSX/Y (6F4h, 6F6h) and the
+   driver version (6FCh); with all of them as expected it gets 8, which
+   selects the 16 color images as on a 256 color screen. Done once, from
+   the cursor calls after USER has started (15, 16 and 24 bpp). */
+#ifndef OLDWIN
+typedef DWORD (__far __pascal *PGLOBALLOCK)(WORD);
+typedef WORD  (__far __pascal *PGLOBALUNLOCK)(WORD);
+static WORD win30_fixed;                /* tries; 0xFFFF: done */
+
+void win30_icon_fix(void)
+{
+    WORD hu, hk, autodata, segtab, h;
+    LPBYTE ne;
+    DWORD p;
+    LPWORD v;
+    PGLOBALLOCK gl;
+    PGLOBALUNLOCK gu;
+    if (win30_fixed == 0xFFFF || g.winver != 0x0003 || !g.enabled) return;
+    /* not at 32 bpp: a 16 color 32x32 icon takes 4 KB there, and a group of
+       16 programs (Accessories) no longer fits the 64 KB group file -
+       Program Manager would save it empty; the 2 color images it takes
+       instead are 32x16 */
+    if (g.bpp <= 8 || g.bpp >= 32 || ++win30_fixed > 2000) { win30_fixed = 0xFFFF; return; }
+    hu = GetModuleHandle((LPSTR)"USER");
+    hk = GetModuleHandle((LPSTR)"KERNEL");
+    if (!hu || !hk) return;
+    gl = (PGLOBALLOCK)GetProcAddress(hk, (LPSTR)MK_FP(0, 18));
+    gu = (PGLOBALUNLOCK)GetProcAddress(hk, (LPSTR)MK_FP(0, 19));
+    if (!gl || !gu) return;
+    ne = (LPBYTE)MK_FP(hu, 0);              /* module database: the NE header */
+    if (ne[0] != 'N' || ne[1] != 'E') return;
+    autodata = *(LPWORD)(ne + 0x0E);
+    segtab = *(LPWORD)(ne + 0x22);
+    if (!autodata) return;
+    h = *(LPWORD)(ne + segtab + (autodata - 1) * 10 + 8);
+    p = gl(h);
+    if (!p) return;
+    v = (LPWORD)MK_FP((WORD)(p >> 16), 0);
+    /* not computed yet: try again at the next cursor call */
+    if (v[0x6F4 / 2] == g.dpi && v[0x6F6 / 2] == g.dpi && v[0x6FC / 2] == 0x300 && v[0x6FE / 2] == g.bpp) {
+        v[0x6FE / 2] = 8;
+        win30_fixed = 0xFFFF;
+        DBG("Windows 3.0 USER (data %x): icon color depth set to 8\n", (WORD)(p >> 16));
+    }
+    gu(h);
+}
+#endif
+
 /* Windows 9x: see vbe_dispi_repair() */
 void win9x_check_screen(void)
 {
@@ -341,6 +505,10 @@ static void load_palette_hw(void)
     if (g.palettized)
         vbe_set_dac(0, 256, g.pal);
 }
+
+/* the screen PDEVICE (DIB engine mode: dibeng.c) */
+LPPDEVICE scr_pdev;
+#pragma aux scr_pdev "*"
 
 /* after a mode set: palette, snapshots of the hardware state */
 static void after_mode_set(void)
@@ -366,8 +534,11 @@ static void after_mode_set(void)
 static void setup_shadow(void)
 {
     g.shadow = 0;
+    /* a turned or scaled desktop: rows of its own width in the shadow */
+    g.spitch = g.xf ? (g.lw * g.Bpp + 3) & ~3 : g.pitch;
+    if (!g.xf) { g.lw = g.xres; g.lh = g.yres; }
     if (g.ini_shadow && !g.svga && g.pmode && g.cpu386 && (g.enhanced || g.win9x) &&
-        shadow_alloc((DWORD)g.pitch * g.yres))
+        shadow_alloc((DWORD)g.spitch * g.lh))
         g.shadow = 1;
     else
         shadow_free();
@@ -377,7 +548,7 @@ static void setup_shadow(void)
    else the screen is cleared) */
 int enable_hw(BYTE restore)
 {
-    WORD opitch = g.pitch, oy = g.yres;
+    WORD opitch = g.spitch, oy = g.lh;
     BYTE had = g.shadow;
     g.shadow = 0;
     if (!vbe_set_mode()) {
@@ -388,15 +559,24 @@ int enable_hw(BYTE restore)
     }
     after_mode_set();
     setup_shadow();
-    if (restore && had && g.shadow && opitch == g.pitch && oy == g.yres) {
-        shadow_flush(0, 0, g.xres, g.yres);
+    lut_update();
+    pdev_sync();
+    if (g.xf == 2) vram_clear();            /* the borders of a scaled desktop */
+    if (restore && had && g.shadow && opitch == g.spitch && oy == g.lh) {
+        shadow_flush(0, 0, g.lw, g.lh);
         return 1;
     }
     /* clear screen */
     {
         WORD y;
-        for (y = 0; y < g.yres; y++)
-            scr_fill(y, 0, g.xres, 0);
+#ifndef OLDWIN
+        if (dibeng_on) dibeng_begin(0, 0, g.xres, g.yres);
+#endif
+        for (y = 0; y < g.lh; y++)
+            scr_fill(y, 0, g.lw, 0);
+#ifndef OLDWIN
+        if (dibeng_on) dibeng_end();
+#endif
     }
     return 0;
 }
@@ -410,6 +590,9 @@ WORD EXPORT Enable(LPVOID lpDevice, WORD style, LPSTR lpDevType, LPSTR lpOutFile
     ensure_init();
     DBG("Enable(%p, %x)\n", lpDevice, style);
     if (style & 1) {
+#ifndef OLDWIN
+        dibeng_check();
+#endif
         fill_gdiinfo((LPGDIINFO)lpDevice);
 #ifdef OLDWIN
         {   /* test hook: GdiPatch=idx:val,idx:val (word index into GDIINFO) */
@@ -440,12 +623,11 @@ WORD EXPORT Enable(LPVOID lpDevice, WORD style, LPSTR lpDevType, LPSTR lpOutFile
         LPPDEVICE pd = (LPPDEVICE)lpDevice;
         far_memset(pd, 0, sizeof(PDEVICE));
         pd->bm.bmType = PDEV_TYPE;
-        pd->bm.bmWidth = g.mi.xres;
-        pd->bm.bmHeight = g.mi.yres;
-        pd->bm.bmWidthBytes = g.mi.xres * g.mi.Bpp;
+        pd->bm.bmWidth = g.lw;
+        pd->bm.bmHeight = g.lh;
+        pd->bm.bmWidthBytes = g.lw * g.mi.Bpp;
         pd->bm.bmPlanes = 1;
         pd->bm.bmBitsPixel = g.mi.Bpp == 2 ? 16 : g.mi.Bpp * 8;
-        pd->magic = PDEV_MAGIC;
     }
     if (style & 0x8000)          /* information context only */
         return 1;
@@ -474,9 +656,65 @@ WORD EXPORT Enable(LPVOID lpDevice, WORD style, LPSTR lpDevType, LPSTR lpOutFile
     screen_busy++;
     enable_hw(0);
     screen_busy--;
+#ifndef OLDWIN
+    if (dibeng_on) {
+        if (!dibeng_enable(lpDevice, lpDevType, lpOutFile, lpData)) return 0;
+        cursor_options(get_ini_int("CursorColor", 0), get_ini_int("CursorSize", 1));
+        return 1;
+    }
+#endif
+    cursor_options(get_ini_int("CursorColor", 0), get_ini_int("CursorSize", 1));
     cursor_show();
     return 1;
 }
+
+#ifndef OLDWIN
+/* Windows 95/98/ME: a new resolution without a restart (Display Properties,
+   ChangeDisplaySettings, DirectDraw). The new mode is in the registry
+   (HKEY_CURRENT_CONFIG\Display\Settings). A new colour depth is refused
+   (0): GDI keeps the bitmaps and brushes it has realized for the old one,
+   so that takes a restart. */
+WORD EXPORT ReEnable(LPVOID lpDevice, LPGDIINFO lpInfo)
+{
+    WORD ow = g.req_w, oh = g.req_h, ob = g.req_bpp, om = g.req_mode;
+    MODEINFO omi = g.mi;
+    TRACE("ReEnable\n");
+    win9x_settings();
+    vbe_select_mode();
+    DBG("ReEnable: %ux%ux%u -> %ux%ux%u\n", omi.xres, omi.yres, omi.bpp, g.mi.xres, g.mi.yres, g.mi.bpp);
+    /* a new color depth: only as a DIB engine driver (Windows 98 changes it
+       without a restart then; WINVBE's own drawing code keeps its caches) */
+    if ((g.mi.bpp != omi.bpp && !dibeng_on) || !vbe_prepare() ||
+        (dibeng_on && !(g.access == ACC_LFB && g.lfbsel && g.lfblin))) {
+        g.req_w = ow; g.req_h = oh; g.req_bpp = ob; g.req_mode = om;
+        g.mi = omi;
+        vbe_prepare();
+        return 0;
+    }
+    rm_winfunc_ptr = g.mi.winfunc;
+    rm_winfunc_both = (g.mi.winBattr & 1) && !((g.mi.winAattr & 7) == 7);
+    screen_busy++;
+    cursor_hide_all();
+    g.enabled = 0;
+    shadow_free();
+    enable_hw(0);
+    {
+        LPPDEVICE pd = (LPPDEVICE)lpDevice;
+        pd->bm.bmWidth = g.lw;
+        pd->bm.bmHeight = g.lh;
+        pd->bm.bmWidthBytes = g.lw * g.mi.Bpp;
+    }
+    if (g.mi.bpp != omi.bpp) palette_init();
+    pdev_sync();
+#ifndef OLDWIN
+    if (dibeng_on) dibeng_reenable(lpDevice);
+#endif
+    if (lpInfo) fill_gdiinfo(lpInfo);
+    screen_busy--;
+    cursor_show();
+    return 1;
+}
+#endif
 
 WORD EXPORT Disable(LPVOID lpDevice)
 {
@@ -488,6 +726,7 @@ WORD EXPORT Disable(LPVOID lpDevice)
 #endif
     g.enabled = 0;
     shadow_free();
+    pdev_sync();
     vbe_text_mode();
     if (hooked) { if (g.vdd_assist) { vdd_assist(0); g.vdd_assist = 0; } unhook_int2f(); hooked = 0; }
     return 1;
@@ -498,6 +737,7 @@ static void redraw_from_shadow(void);
 /* called by USER: TRUE = don't call RepaintScreen now */
 void EXPORT UserRepaintDisable(WORD disable)
 {
+    win30_icon_fix();
     g.repaint_disable = (BYTE)disable;
     if (!disable) win9x_check_screen();
     /* Windows 3.x enhanced mode, back from a full-screen DOS box: the VDD
@@ -544,7 +784,7 @@ static void redraw_from_shadow(void)
     if (!g.enabled || g.in_background) return;
     cursor_hide_all();
     screen_busy++;
-    shadow_flush(0, 0, g.xres, g.yres);
+    shadow_flush(0, 0, g.lw, g.lh);
     screen_busy--;
     cursor_show();
 }
@@ -630,6 +870,7 @@ void __far __cdecl on_int2f(WORD ax, WORD bx)
         DBG("INT2F 4001 (background)\n");
         screen_busy++;
         g.in_background = 1;
+        pdev_sync();
         cursor_invalidate();
         /* the VDD of Windows 9x only reloads the standard VGA registers for a
            full-screen DOS box: leave the VBE mode first (3.x: the VDD does
@@ -678,7 +919,15 @@ WORD EXPORT SetPalette(WORD start, WORD count, LPBYTE pal)
     WORD i;
     if (!pal || start > 255) return 0;
     if (start + count > 256) count = 256 - start;
+#ifndef OLDWIN
+    if (dibeng_on) return dibeng_setpalette(start, count, pal);
+#endif
     DBG("SetPalette(%u,%u) %02x%02x%02x\n", start, count, pal[0], pal[1], pal[2]);
+    if (g.debug > 1) {
+        WORD k;
+        for (k = 0; k < count && k < 24; k++) dbg_printf(" %u:%02x%02x%02x", start + k, pal[k * 4], pal[k * 4 + 1], pal[k * 4 + 2]);
+        dbg_printf("\n");
+    }
     for (i = 0; i < count; i++) {
         g.pal[(start + i) * 4 + 0] = pal[i * 4 + 0];
         g.pal[(start + i) * 4 + 1] = pal[i * 4 + 1];
@@ -713,6 +962,7 @@ WORD EXPORT SetPaletteTranslate(LPWORD xlat)
 {
     TRACE("SetPaletteTranslate\n");
     WORD i;
+    if (g.debug > 1 && xlat) { dbg_printf("SetPaletteTranslate:"); for (i = 0; i < 16; i++) dbg_printf(" %x", xlat[i]); dbg_printf("\n"); }
     g.xlat_identity = 1;
     for (i = 0; i < 256; i++) {
         g.xlat[i] = xlat ? (xlat[i] & 0xFF) : i;
@@ -734,9 +984,9 @@ void EXPORT UpdateColors(WORD x, WORD y, WORD w, WORD h, LPWORD xlat)
 {
     WORD r, c;
     if (!xlat || !g.palettized || !g.enabled) return;
-    if (x >= g.xres || y >= g.yres) return;
-    if (x + w > g.xres) w = g.xres - x;
-    if (y + h > g.yres) h = g.yres - y;
+    if (x >= g.lw || y >= g.lh) return;
+    if (x + w > g.lw) w = g.lw - x;
+    if (y + h > g.lh) h = g.lh - y;
     screen_busy++;
     cursor_exclude(x, y, x + w, y + h);
     for (r = 0; r < h; r++) {
@@ -761,6 +1011,18 @@ void EXPORT UpdateColors(WORD x, WORD y, WORD w, WORD h, LPWORD xlat)
    2 suspend, 4 off; FFFFh = query).  Query returns 100h | VBE/PM states
    (bit 7 = VBE/PM present), a set 1 */
 #define WINVBE_DPMS      0x7702
+/* WINVBE_CURSOR: IN = WORD[2] pointer color (0 black .. 7) and size (1, 2);
+   the WINVBE Mouse settings, also [WINVBE] CursorColor / CursorSize */
+#define WINVBE_CURSOR    0x7703
+/* WINVBE_COLOR: IN = WORD[3] gamma (1/100), brightness + 1000, contrast
+   (percent); the WINVBE Colors settings. Returns 1 applied, 2 saved but not
+   applied in this mode (high or true colour with the DIB engine or without
+   the shadow frame buffer: after a restart) */
+#define WINVBE_COLOR     0x7704
+/* OPENGL_GETINFO (Windows 9x OPENGL32.DLL): the name of the OpenGL ICD,
+   OUT = { DWORD version 2, DWORD driver version, char name[] }; the
+   registry (OpenGLDrivers) maps it to WVBGL32.DLL ([WINVBE] OpenGL=0: none) */
+#define OPENGL_GETINFO   4353
 
 typedef struct {
     WORD  size;         /* sizeof this struct */
@@ -832,7 +1094,7 @@ static int dci_possible(void)
 {
     if (!g.enabled || !g.cpu386 || !(g.enhanced || g.win9x)) return 0;
     if (g.shadow) return 1;
-    return g.access == ACC_LFB && g.lfbsel && g.lfblin;
+    return !g.xf && g.access == ACC_LFB && g.lfbsel && g.lfblin;
 }
 
 /* fill the surface info from the current mode; DCI_STATUS_x of what changed */
@@ -862,17 +1124,17 @@ static SHORT dci_fill(void)
         m0 = 0xFF0000UL; m1 = 0xFF00; m2 = 0xFF;
     }
     if (dci.dwOffSurface != ofs || dci.wSelSurface != dci_sel) st |= DCI_STATUS_POINTERCHANGED;
-    if (dci.lStride != (LONG)g.pitch) st |= DCI_STATUS_STRIDECHANGED;
+    if (dci.lStride != (LONG)g.spitch) st |= DCI_STATUS_STRIDECHANGED;
     if (dci.dwBitCount != (g.bpp == 15 ? 16UL : g.bpp) || dci.dwCompression != comp || dci.dwMask[0] != m0)
         st |= DCI_STATUS_FORMATCHANGED;
-    if (dci.dwWidth != g.xres || dci.dwHeight != g.yres) st |= DCI_STATUS_SURFACEINFOCHANGED;
+    if (dci.dwWidth != g.lw || dci.dwHeight != g.lh) st |= DCI_STATUS_SURFACEINFOCHANGED;
     dci.dwSize = sizeof(dci);
     dci.dwDCICaps = DCI_PRIMARY | DCI_VISIBLE | DCI_1632_ACCESS;
     dci.dwCompression = comp;
     dci.dwMask[0] = m0; dci.dwMask[1] = m1; dci.dwMask[2] = m2;
-    dci.dwWidth = g.xres;
-    dci.dwHeight = g.yres;
-    dci.lStride = g.pitch;
+    dci.dwWidth = g.lw;
+    dci.dwHeight = g.lh;
+    dci.lStride = g.spitch;
     dci.dwBitCount = g.bpp == 15 ? 16 : g.bpp;
     dci.dwOffSurface = ofs;
     dci.wSelSurface = dci_sel;
@@ -888,7 +1150,7 @@ static SHORT __far __pascal __loadds dci_begin(LPVOID surf, LPGRECT rc)
     screen_busy++;
     dci_in = 1;
     if (rc) dci_rc = *rc;
-    else { dci_rc.left = dci_rc.top = 0; dci_rc.right = g.xres; dci_rc.bottom = g.yres; }
+    else { dci_rc.left = dci_rc.top = 0; dci_rc.right = g.lw; dci_rc.bottom = g.lh; }
     if (dci_rc.left < 0) dci_rc.left = 0;
     if (dci_rc.top < 0) dci_rc.top = 0;
     cursor_exclude(dci_rc.left, dci_rc.top, dci_rc.right, dci_rc.bottom);
@@ -910,6 +1172,8 @@ static void __far __pascal __loadds dci_destroy(LPVOID surf)
     dci_end(surf);
 }
 
+SHORT dd_command(LPVOID cmd, LPVOID out);
+
 static SHORT dci_command(DCICMD FAR *cmd, LPVOID lpOut)
 {
     SHORT st;
@@ -930,12 +1194,24 @@ static SHORT dci_command(DCICMD FAR *cmd, LPVOID lpOut)
 SHORT EXPORT Control(LPVOID lpDev, WORD func, LPVOID lpIn, LPVOID lpOut)
 {
     TRACE("Control\n");
+    DBG("Control %u dev %lx/%lx in %lx\n", func, (DWORD)lpDev, (DWORD)scr_pdev,
+        lpIn && (func == 8 || func == 3075) ? (func == 8 ? (DWORD)*(LPWORD)lpIn : ((LPDWORD)lpIn)[0]) : 0UL);
     switch (func) {
     case QUERYESCSUPPORT: {
         WORD esc = *(LPWORD)lpIn;
+#ifndef OLDWIN
+        /* DCI_VERSION and DD_HAL_VERSION are both 100h */
+        if (esc == DCICOMMAND) return dci_possible() || dd_possible() ? DCI_VERSION : 0;
+#else
         if (esc == DCICOMMAND) return dci_possible() ? DCI_VERSION : 0;
-        return (esc == QUERYESCSUPPORT || esc == GETCOLORTABLE || esc == WINVBE_GETINFO ||
-                esc == WINVBE_DPMS) ? 1 : 0;
+#endif
+        if (esc == QUERYESCSUPPORT || esc == GETCOLORTABLE || esc == WINVBE_GETINFO || esc == WINVBE_DPMS ||
+            esc == WINVBE_CURSOR || esc == WINVBE_COLOR) return 1;
+#ifndef OLDWIN
+        if (esc == OPENGL_GETINFO) return g.win9x && g.ini_opengl;
+        if (dibeng_on) return dibeng_control(lpDev, func, lpIn, lpOut);
+#endif
+        return 0;
     }
 #ifndef OLDWIN
     case WINVBE_DPMS: {
@@ -950,17 +1226,49 @@ SHORT EXPORT Control(LPVOID lpDev, WORD func, LPVOID lpIn, LPVOID lpOut)
     }
 #endif
     case DCICOMMAND:
+#ifndef OLDWIN
+        /* DirectDraw's HAL requests (ddhal.c) */
+        if (lpIn && ((DCICMD FAR *)lpIn)->dwVersion == 0x0200) return dd_command(lpIn, lpOut);
+#endif
         return dci_command((DCICMD FAR *)lpIn, lpOut);
+    case WINVBE_COLOR: {
+        LPWORD a = (LPWORD)lpIn;
+        BYTE had = lut_hc;
+        if (!a) return -1;
+        lut_build(a[0], (SHORT)(a[1] - 1000), a[2]);
+        lut_update();
+        if (!g.enabled || g.in_background) return 1;
+        if (g.palettized) vbe_set_dac(0, 256, g.pal);
+        else if (lut_hc || had) redraw_from_shadow();
+        return lut_on && !g.palettized && !lut_hc ? 2 : 1;
+    }
+    case WINVBE_CURSOR:
+        if (!lpIn) return -1;
+        cursor_options(((LPWORD)lpIn)[0], ((LPWORD)lpIn)[1]);
+        return 1;
+#ifndef OLDWIN
+    case OPENGL_GETINFO: {
+        /* Windows 9x's OPENGL32.DLL reads the name as an ANSI string (the
+           registry value it looks up; Windows NT: Unicode) */
+        static const char nm[] = "WINVBE";
+        LPBYTE b = (LPBYTE)lpOut;
+        WORD i;
+        if (!g.win9x || !g.ini_opengl || !b) return 0;
+        ((LPDWORD)b)[0] = 2; ((LPDWORD)b)[1] = 1;
+        for (i = 0; i < sizeof(nm); i++) b[8 + i] = nm[i];
+        return 1;
+    }
+#endif
     case WINVBE_GETINFO: {
         WINVBEINFO FAR *wi = (WINVBEINFO FAR *)lpOut;
         WORD i;
         far_memset(wi, 0, sizeof(WINVBEINFO));
         wi->size = sizeof(WINVBEINFO);
-        wi->version = 0x0110;
+        wi->version = 0x0120;
         wi->mode = g.mi.mode; wi->width = g.xres; wi->height = g.yres; wi->bpp = g.bpp;
         /* access: bit 7 = LFB unusable, 6 = write combining, 5 = shadow */
         wi->pitch = g.pitch; wi->access = g.access | (g.lfb_state == 2 ? 0x80 : 0) | (g.wc ? 0x40 : 0) |
-                                          (g.shadow ? 0x20 : 0);
+                                          (g.shadow ? 0x20 : 0) | (dibeng_on ? 0x10 : 0);
         wi->vbever = g.vbever;
         wi->refresh = g.refresh_set ? g.refresh_cur : 0;
         wi->dpi = g.dpi; wi->memkb = g.totalmem64k * 64;
@@ -974,7 +1282,58 @@ SHORT EXPORT Control(LPVOID lpDev, WORD func, LPVOID lpIn, LPVOID lpOut)
         return 1;
     }
     }
+#ifndef OLDWIN
+    if (dibeng_on) return dibeng_control(lpDev, func, lpIn, lpOut);
+#endif
     return 0;
+}
+
+#ifndef OLDWIN
+/* Windows 98/ME (ordinal 32): GetDeviceGammaRamp / SetDeviceGammaRamp, and
+   with them DirectDraw's IDirectDrawGammaControl on the primary surface.
+   GDI calls it when GDIINFO has C1_GAMMA_RAMP; ramp = WORD[3][256].
+   Setting works in 256 colours (the palette) and in high or true colour
+   when the driver draws through its shadow frame buffer itself (not with
+   the DIB engine, not for programs writing to video memory) */
+int gamma_possible(void)
+{
+    return g.palettized || (g.Bpp > 1 && g.shadow && !dibeng_on);
+}
+
+WORD EXPORT GammaRamp(LPVOID lpDev, WORD set, LPWORD ramp)
+{
+    BYTE had = lut_hc;
+    (void)lpDev;
+    if (!ramp) return 0;
+    if (!set) { lut_get_ramp(ramp); return 1; }
+    if (!gamma_possible()) return 0;
+    lut_ramp(ramp);
+    lut_update();
+    if (!g.enabled || g.in_background) return 1;
+    if (g.palettized) vbe_set_dac(0, 256, g.pal);
+    else if (lut_hc || had) redraw_from_shadow();
+    return 1;
+}
+#endif
+
+/* Windows 95/98/ME (ordinal 700): Display Properties lists only the modes
+   the driver confirms - without it the colours and the screen area could
+   not be changed there, only with WINVBECF */
+typedef struct {
+    WORD  dvmSize;
+    WORD  dvmBpp;
+    SHORT dvmXRes;
+    SHORT dvmYRes;
+} DISPVALMODE;
+
+WORD EXPORT ValidateMode(DISPVALMODE FAR *vm)
+{
+    WORD r;
+    TRACE("ValidateMode\n");
+    if (!vm || vm->dvmXRes <= 0 || vm->dvmYRes <= 0) return 4;
+    r = vbe_mode_ok((WORD)vm->dvmXRes, (WORD)vm->dvmYRes, vm->dvmBpp);
+    DBG("ValidateMode %dx%dx%u -> %u\n", vm->dvmXRes, vm->dvmYRes, vm->dvmBpp, r);
+    return r;
 }
 
 WORD EXPORT DeviceMode(WORD hWnd, WORD hInst, LPSTR lpDevType, LPSTR lpOutFile)

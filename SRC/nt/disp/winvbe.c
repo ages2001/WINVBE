@@ -21,11 +21,20 @@
 #include <winioctl.h>
 #include <ntddvdeo.h>
 #include "../common/wvbnt.h"
+#ifndef NT3X
+#include "d3dnt.h"
+#endif
 
 #if defined(NT3X) && !defined(_WINBASE_)
 __declspec(dllimport) BOOL WINAPI DeviceIoControl(HANDLE, DWORD, LPVOID, DWORD, LPVOID, DWORD, LPDWORD, LPVOID);
 __declspec(dllimport) HLOCAL WINAPI LocalAlloc(UINT, SIZE_T);
 __declspec(dllimport) HLOCAL WINAPI LocalFree(HLOCAL);
+__declspec(dllimport) VOID WINAPI InitializeCriticalSection(RTL_CRITICAL_SECTION *);
+__declspec(dllimport) VOID WINAPI EnterCriticalSection(RTL_CRITICAL_SECTION *);
+__declspec(dllimport) VOID WINAPI LeaveCriticalSection(RTL_CRITICAL_SECTION *);
+__declspec(dllimport) HMODULE WINAPI GetModuleHandleA(LPCSTR);
+__declspec(dllimport) FARPROC WINAPI GetProcAddress(HMODULE, LPCSTR);
+__declspec(dllimport) BOOL WINAPI ReadProcessMemory(HANDLE, LPCVOID, LPVOID, SIZE_T, SIZE_T *);
 #endif
 #ifdef NT3X
 #define EXPORT __declspec(dllexport)
@@ -107,7 +116,21 @@ typedef struct {
     LONG     sstride;
     HSURF    hbm;               /* engine bitmap over shadow */
     SURFOBJ *pso;               /* ... locked */
+    /* display features (WinVbe.* in the registry, shadow frame buffer) */
+    ULONG    pw, ph;            /* the mode the card shows (w, h: the desktop) */
+    ULONG    shadowed;          /* GDI draws into shadow, flush_rect shows it */
+    ULONG    rot;               /* quarter turns clockwise */
+    ULONG    scaled;            /* 1 keep aspect, 2 full: desktop scaled to pw x ph */
+    LONG     dx0, dy0, dw, dh;  /* ... into this rectangle of the screen */
+    ULONG    lut_on;            /* colour tables (gamma, brightness, contrast) */
+    BYTE     lut[3][256];
+    USHORT  *lut16;             /* 16 bpp: every pixel value */
+    int      rs, gs, bs;        /* lowest bit of each colour mask */
+    RECTL    ddlock;            /* the part of the primary surface DirectDraw locked */
+    ULONG    ddlocked;
+    ULONG    palgen;            /* palette version (glnt.c: 8 bpp colour lookup) */
 } PDEV;
+static ULONG g_palgen;
 
 /* standard hatch patterns, 8x8 1 bpp (0 = line, 1 = gap), DWORD rows */
 static const BYTE hatch[HS_DDI_MAX][8] = {
@@ -175,21 +198,47 @@ static void trace(const char *f, ...)
 /* ------------------------------------------------------------------ */
 /* modes                                                               */
 
+/* turned desktops: every mode is also offered the other way round (w and
+   h swapped, this flag set) - so that Windows (its DEVMODE and the size
+   of the desktop must agree) can switch to a turned desktop at once */
+#define WVB_TURNED_FLAG 0x20000000UL
+
+static int is_turned(VIDEO_MODE_INFORMATION *v)
+{
+    return !(v->AttributeFlags & VIDEO_MODE_BANKED) && (v->DriverSpecificAttributeFlags & WVB_TURNED_FLAG);
+}
+
 static VIDEO_MODE_INFORMATION *get_modes(HANDLE h, ULONG *count)
 {
     VIDEO_NUM_MODES nm;
     VIDEO_MODE_INFORMATION *m;
-    ULONG ret;
+    ULONG ret, n, i, j, k;
     *count = 0;
     if (ioctl(h, IOCTL_VIDEO_QUERY_NUM_AVAIL_MODES, NULL, 0, &nm, sizeof(nm), &ret) || !nm.NumModes)
         return NULL;
-    m = mem_alloc(nm.NumModes * sizeof(VIDEO_MODE_INFORMATION));
+    m = mem_alloc(2 * nm.NumModes * sizeof(VIDEO_MODE_INFORMATION));
     if (!m) return NULL;
     if (ioctl(h, IOCTL_VIDEO_QUERY_AVAIL_MODES, NULL, 0, m, nm.NumModes * sizeof(VIDEO_MODE_INFORMATION), &ret)) {
         mem_free(m);
         return NULL;
     }
-    *count = ret / sizeof(VIDEO_MODE_INFORMATION);
+    n = ret / sizeof(VIDEO_MODE_INFORMATION);
+    for (i = 0, k = n; i < n; i++) {
+        VIDEO_MODE_INFORMATION *v = &m[i];
+        if ((v->AttributeFlags & VIDEO_MODE_BANKED) || (v->DriverSpecificAttributeFlags & WVB_SCALED_FLAG) ||
+            v->VisScreenWidth == v->VisScreenHeight)
+            continue;
+        for (j = 0; j < n; j++)         /* the card has that size itself */
+            if (m[j].VisScreenWidth == v->VisScreenHeight && m[j].VisScreenHeight == v->VisScreenWidth &&
+                m[j].BitsPerPlane == v->BitsPerPlane && m[j].Frequency == v->Frequency) break;
+        if (j < n) continue;
+        m[k] = *v;
+        m[k].VisScreenWidth = v->VisScreenHeight;
+        m[k].VisScreenHeight = v->VisScreenWidth;
+        m[k].DriverSpecificAttributeFlags |= WVB_TURNED_FLAG;
+        k++;
+    }
+    *count = k;
     return m;
 }
 
@@ -272,9 +321,11 @@ static BOOL load_palette(PDEV *pd, ULONG start, ULONG n)
     c->NumEntries = (USHORT)n;
     c->FirstEntry = (USHORT)start;
     for (i = 0; i < n; i++) {
-        c->LookupTable[i].RgbArray.Red = pd->pal[start + i].peRed;
-        c->LookupTable[i].RgbArray.Green = pd->pal[start + i].peGreen;
-        c->LookupTable[i].RgbArray.Blue = pd->pal[start + i].peBlue;
+        BYTE r = pd->pal[start + i].peRed, g = pd->pal[start + i].peGreen, b = pd->pal[start + i].peBlue;
+        if (pd->lut_on) { r = pd->lut[0][r]; g = pd->lut[1][g]; b = pd->lut[2][b]; }
+        c->LookupTable[i].RgbArray.Red = r;
+        c->LookupTable[i].RgbArray.Green = g;
+        c->LookupTable[i].RgbArray.Blue = b;
         c->LookupTable[i].RgbArray.Unused = 0;
     }
     ok = !ioctl(pd->hDriver, IOCTL_VIDEO_SET_COLOR_REGISTERS, c,
@@ -292,6 +343,103 @@ static const LOGFONTW lf_ansivar = {12,9,0,0,400,0,0,0,ANSI_CHARSET,OUT_DEFAULT_
     PROOF_QUALITY,VARIABLE_PITCH|FF_DONTCARE,L"MS Sans Serif"};
 static const LOGFONTW lf_ansifix = {12,9,0,0,400,0,0,0,ANSI_CHARSET,OUT_DEFAULT_PRECIS,CLIP_STROKE_PRECIS,
     PROOF_QUALITY,FIXED_PITCH|FF_DONTCARE,L"Courier"};
+
+/* pixels of 1 - 4 bytes */
+static void put_px(BYTE *p, ULONG Bpp, ULONG v)
+{
+    switch (Bpp) {
+    case 4: *(ULONG *)p = v; break;
+    case 2: *(USHORT *)p = (USHORT)v; break;
+    case 3: p[0] = (BYTE)v; p[1] = (BYTE)(v >> 8); p[2] = (BYTE)(v >> 16); break;
+    default: *p = (BYTE)v; break;
+    }
+}
+
+static ULONG get_px(const BYTE *p, ULONG Bpp)
+{
+    switch (Bpp) {
+    case 4: return *(const ULONG *)p;
+    case 2: return *(const USHORT *)p;
+    case 3: return p[0] | ((ULONG)p[1] << 8) | ((ULONG)p[2] << 16);
+    default: return *p;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* display features: rotation, colour tables, scaling, shadow          */
+
+static int low_bit(ULONG m)
+{
+    int b = 0;
+    if (!m) return 0;
+    while (!(m & 1)) { m >>= 1; b++; }
+    return b;
+}
+
+/* the 16 bpp table: every pixel value through the colour tables */
+static void make_lut16(PDEV *pd)
+{
+    ULONG v;
+    int rn, gn, bn;
+    if (pd->Bpp != 2 || !pd->lut_on) return;
+    if (!pd->lut16) pd->lut16 = mem_alloc(65536 * sizeof(USHORT));
+    if (!pd->lut16) { pd->lut_on = 0; return; }
+    rn = low_bit(~(pd->rmask >> pd->rs)); gn = low_bit(~(pd->gmask >> pd->gs)); bn = low_bit(~(pd->bmask >> pd->bs));
+    for (v = 0; v < 65536; v++) {
+        ULONG r = (v & pd->rmask) >> pd->rs, g = (v & pd->gmask) >> pd->gs, b = (v & pd->bmask) >> pd->bs;
+        /* to 8 bits, through the table, back */
+        r = pd->lut[0][(r << (8 - rn)) | (r >> (2 * rn - 8))] >> (8 - rn);
+        g = pd->lut[1][(g << (8 - gn)) | (g >> (2 * gn - 8))] >> (8 - gn);
+        b = pd->lut[2][(b << (8 - bn)) | (b >> (2 * bn - 8))] >> (8 - bn);
+        pd->lut16[v] = (USHORT)((r << pd->rs) | (g << pd->gs) | (b << pd->bs));
+    }
+}
+
+static void get_options(PDEV *pd)
+{
+    WVBOPT o;
+    ULONG r;
+    memset(&o, 0, sizeof(o));
+    if (ioctl(pd->hDriver, IOCTL_WVB_GET_OPTIONS, NULL, 0, &o, sizeof(o), &r) || r < sizeof(o)) {
+        memset(&o, 0, sizeof(o));
+        o.gamma = 100; o.contrast = 100;
+    }
+    pd->rs = low_bit(pd->rmask); pd->gs = low_bit(pd->gmask); pd->bs = low_bit(pd->bmask);
+    if (pd->banked) return;                 /* the VGA window: none of these */
+    /* the orientation of the mode decides 90/270 or 0/180, WinVbe.Rotate
+       which of the two */
+    if (pd->rot) pd->rot = o.rotate == 270 ? 3 : 1;
+    else pd->rot = !pd->scaled && o.rotate == 180 ? 2 : 0;
+    if (o.lut_on) {
+        memcpy(pd->lut, o.lut, sizeof(pd->lut));
+        pd->lut_on = 1;
+        make_lut16(pd);
+    }
+    pd->shadowed = o.shadow || pd->rot || pd->scaled || (pd->lut_on && pd->bpp > 8);
+    if (pd->scaled) {
+        /* the desktop pd->w x pd->h into pd->pw x pd->ph */
+        if (pd->scaled == 1 && pd->w * pd->ph != pd->h * pd->pw) {
+            if (pd->w * pd->ph > pd->h * pd->pw) { pd->dw = (LONG)pd->pw; pd->dh = (LONG)(pd->h * pd->pw / pd->w); }
+            else { pd->dh = (LONG)pd->ph; pd->dw = (LONG)(pd->w * pd->ph / pd->h); }
+        } else { pd->dw = (LONG)pd->pw; pd->dh = (LONG)pd->ph; }
+        pd->dx0 = ((LONG)pd->pw - pd->dw) / 2;
+        pd->dy0 = ((LONG)pd->ph - pd->dh) / 2;
+    }
+    TRACE(("options: rotate %u shadow %u lut %u scaled %u desktop %ux%u screen %ux%u\n", o.rotate, pd->shadowed,
+           pd->lut_on, pd->scaled, pd->w, pd->h, pd->pw, pd->ph));
+}
+
+/* a pixel through the colour tables */
+static ULONG lut_px(PDEV *pd, ULONG v)
+{
+    switch (pd->Bpp) {
+    case 2: return pd->lut16[v & 0xFFFF];
+    case 3: case 4:
+        return ((ULONG)pd->lut[0][(v >> pd->rs) & 255] << pd->rs) | ((ULONG)pd->lut[1][(v >> pd->gs) & 255] << pd->gs) |
+               ((ULONG)pd->lut[2][(v >> pd->bs) & 255] << pd->bs) | (v & ~(pd->rmask | pd->gmask | pd->bmask));
+    }
+    return v;
+}
 
 DHPDEV APIENTRY DrvEnablePDEV(DEVMODEW *pdm, LPWSTR logaddr, ULONG cPat, HSURF *phsurfPatterns,
                               ULONG cjCaps, ULONG *pdevcaps, ULONG cjDevInfo, DEVINFO *pdi,
@@ -318,13 +466,24 @@ DHPDEV APIENTRY DrvEnablePDEV(DEVMODEW *pdm, LPWSTR logaddr, ULONG cPat, HSURF *
     pd->rmask = v->RedMask; pd->gmask = v->GreenMask; pd->bmask = v->BlueMask;
     pd->dacbits = v->NumberRedBits;
     pd->Bpp = (pd->bpp + 7) / 8;
+    pd->pw = pd->w; pd->ph = pd->h;
+    if (is_turned(v)) {
+        /* a turned desktop (get_modes): the card's mode is h x w */
+        pd->pw = pd->h; pd->ph = pd->w;
+        pd->rot = 1;
+    }
     if ((v->AttributeFlags & VIDEO_MODE_BANKED) && (v->DriverSpecificAttributeFlags & WVB_BANKED_FLAG)) {
         pd->banked = 1;
         pd->gran = (v->DriverSpecificAttributeFlags & 0xFFFF) << 10;
         pd->winsz = ((v->DriverSpecificAttributeFlags >> 16) & 0x7FFF) << 10;
         if (!pd->gran || !pd->winsz) pd->gran = pd->winsz = 0x10000;
+    } else if (v->DriverSpecificAttributeFlags & WVB_SCALED_FLAG) {
+        pd->pw = v->VideoMemoryBitmapWidth;
+        pd->ph = v->VideoMemoryBitmapHeight;
+        pd->scaled = (v->DriverSpecificAttributeFlags & 3) == 2 ? 2 : 1;
     }
     mem_free(modes);
+    get_options(pd);
 #ifdef FBCALLS
     { VIDEO_COLOR_CAPABILITIES cc; VIDEO_POINTER_CAPABILITIES pc; ULONG r;
       ioctl(hDriver, IOCTL_VIDEO_QUERY_COLOR_CAPABILITIES, NULL, 0, &cc, sizeof(cc), &r);
@@ -352,7 +511,16 @@ DHPDEV APIENTRY DrvEnablePDEV(DEVMODEW *pdm, LPWSTR logaddr, ULONG cPat, HSURF *
     gi.ulVertRes = pd->h;
     gi.cBitsPixel = pd->bpp;
     gi.cPlanes = 1;
+#ifdef NT3X
+    /* NT 3.x programs take a NUMCOLORS of -1 (the usual value for direct
+       colour) for a monochrome screen: Minesweeper (NUMCOLORS > 2 means
+       colour) and other 3.1-era programs drew in black and white. Windows
+       3.x display drivers report 20 there; a positive count of colours
+       keeps them in colour */
+    gi.ulNumColors = pd->bpp == 8 ? 20 : pd->bpp >= 24 ? 0x1000000 : pd->bpp == 16 ? 0x10000 : 0x8000;
+#else
     gi.ulNumColors = pd->bpp == 8 ? 20 : (ULONG)-1;
+#endif
     gi.flRaster = 0;
     gi.ulLogPixelsX = dpi;
     gi.ulLogPixelsY = dpi;
@@ -418,6 +586,7 @@ DHPDEV APIENTRY DrvEnablePDEV(DEVMODEW *pdm, LPWSTR logaddr, ULONG cPat, HSURF *
         pd->pal = mem_alloc(256 * sizeof(PALETTEENTRY));
         if (!pd->pal) { mem_free(pd); return NULL; }
         default_palette(pd->pal);
+        pd->palgen = ++g_palgen;
         pd->hpal = EngCreatePalette(PAL_INDEXED, 256, (ULONG *)pd->pal, 0, 0, 0);
         di.flGraphicsCaps |= GCAPS_PALMANAGED | GCAPS_COLOR_DITHER;
         di.iDitherFormat = BMF_8BPP;
@@ -428,6 +597,10 @@ DHPDEV APIENTRY DrvEnablePDEV(DEVMODEW *pdm, LPWSTR logaddr, ULONG cPat, HSURF *
     if (!pd->hpal) { mem_free(pd->pal); mem_free(pd); return NULL; }
     TRACE(("EnablePDEV mode %x %ux%ux%u stride %u\n", pd->mode, pd->w, pd->h, pd->bpp, pd->stride));
     di.hpalDefault = pd->hpal;
+#ifndef NT3X
+    if (g_engine >= DDI_DRIVER_VERSION_NT5 && !pd->banked && (pd->bpp == 8 || pd->shadowed))
+        di.flGraphicsCaps2 |= GCAPS2_CHANGEGAMMARAMP;
+#endif
     memcpy(pdi, &di, cjDevInfo < sizeof(di) ? cjDevInfo : sizeof(di));
 #ifdef DEVDEBUG
     { ULONG *q = (ULONG *)pdi; TRACE(("di caps %x tail %x %x %x %x\n", q[0], q[70], q[71], q[72], q[73])); }
@@ -473,6 +646,7 @@ static BOOL set_mode(PDEV *pd)
 }
 
 static HSURF banked_surface(PDEV *pd, PVOID win);
+static void clear_screen(PDEV *pd);
 static void banked_free(PDEV *pd);
 static void flush_rect(PDEV *pd, LONG l, LONG t, LONG r, LONG b);
 
@@ -493,6 +667,11 @@ HSURF APIENTRY DrvEnableSurface(DHPDEV dhpdev)
     pd->fb = mi.FrameBufferBase;
     pd->vram = mi.VideoRamLength;
     pd->start = 0;
+    if (pd->shadowed) {
+        hs = banked_surface(pd, NULL);
+        if (hs) return hs;
+        goto fail;
+    }
     sz.cx = pd->w;
     sz.cy = pd->h;
     fmt = pd->bpp == 8 ? BMF_8BPP : pd->bpp == 16 ? BMF_16BPP : pd->bpp == 24 ? BMF_24BPP : BMF_32BPP;
@@ -521,7 +700,7 @@ VOID APIENTRY DrvDisableSurface(DHPDEV dhpdev)
     TRACE(("DisableSurface\n"));
     if (pd->hsurf) EngDeleteSurface(pd->hsurf);
     pd->hsurf = NULL;
-    if (pd->banked) banked_free(pd);
+    if (pd->banked || pd->shadowed) banked_free(pd);
     if (pd->fb) {
         vm.RequestedVirtualAddress = pd->fb;
         ioctl(pd->hDriver, IOCTL_VIDEO_UNMAP_VIDEO_MEMORY, &vm, sizeof(vm), NULL, 0, &ret);
@@ -537,8 +716,9 @@ BOOL APIENTRY DrvAssertMode(DHPDEV dhpdev, BOOL enable)
     if (enable) {
         if (!set_mode(pd)) return FALSE;
         if (pd->bpp == 8) load_palette(pd, 0, 256);
-        if (pd->banked && pd->pso) {
+        if (pd->pso) {
             pd->pos = (ULONG)-1;
+            if (pd->scaled) clear_screen(pd);
             flush_rect(pd, 0, 0, (LONG)pd->w, (LONG)pd->h);
         }
         return TRUE;
@@ -553,6 +733,7 @@ BOOL APIENTRY DrvSetPalette(DHPDEV dhpdev, PALOBJ *ppalo, FLONG fl, ULONG start,
     if (!pd->pal || start >= 256) return FALSE;
     if (start + n > 256) n = 256 - start;
     if (PALOBJ_cGetColors(ppalo, start, n, (ULONG *)&pd->pal[start]) != n) return FALSE;
+    pd->palgen = ++g_palgen;
     return load_palette(pd, start, n);
 }
 
@@ -608,6 +789,67 @@ static void copy_out(BYTE *d, const BYTE *s, ULONG n)
     while (n--) *d++ = *s++;
 }
 
+/* the shadow of a linear frame buffer mode: copied, turned, scaled and
+   put through the colour tables on the way */
+static void lfb_flush(PDEV *pd, LONG l, LONG t, LONG r, LONG b)
+{
+    ULONG Bpp = pd->Bpp;
+    LONG x, y;
+    BYTE *fb = pd->fb;
+    if (pd->start) return;              /* a DirectDraw back buffer is shown */
+    if (pd->scaled) {
+        /* the screen pixels that show desktop pixels l..r, t..b */
+        LONG X0 = pd->dx0 + l * pd->dw / (LONG)pd->w, X1 = pd->dx0 + (r * pd->dw + (LONG)pd->w - 1) / (LONG)pd->w;
+        LONG Y0 = pd->dy0 + t * pd->dh / (LONG)pd->h, Y1 = pd->dy0 + (b * pd->dh + (LONG)pd->h - 1) / (LONG)pd->h;
+        ULONG step = ((ULONG)pd->w << 16) / (ULONG)pd->dw;
+        for (y = Y0; y < Y1; y++) {
+            ULONG sy = (ULONG)(y - pd->dy0) * pd->h / (ULONG)pd->dh;
+            const BYTE *srow = pd->shadow + sy * (ULONG)pd->sstride;
+            BYTE *d = fb + (ULONG)y * (ULONG)pd->stride + (ULONG)X0 * Bpp;
+            ULONG sx16 = (ULONG)(X0 - pd->dx0) * step;
+            for (x = X0; x < X1; x++, d += Bpp, sx16 += step) {
+                ULONG v = get_px(srow + (sx16 >> 16) * Bpp, Bpp);
+                put_px(d, Bpp, pd->lut_on ? lut_px(pd, v) : v);
+            }
+        }
+        return;
+    }
+    if (!pd->rot) {
+        for (y = t; y < b; y++) {
+            const BYTE *s = pd->shadow + (ULONG)y * (ULONG)pd->sstride + (ULONG)l * Bpp;
+            BYTE *d = fb + (ULONG)y * (ULONG)pd->stride + (ULONG)l * Bpp;
+            if (pd->lut_on && pd->bpp > 8) {
+                for (x = l; x < r; x++, s += Bpp, d += Bpp) put_px(d, Bpp, lut_px(pd, get_px(s, Bpp)));
+            } else
+                copy_out(d, s, (ULONG)(r - l) * Bpp);
+        }
+        return;
+    }
+    /* turned: desktop (x, y) is shown at
+         90: (pw-1-y, x)   180: (pw-1-x, ph-1-y)   270: (y, ph-1-x) */
+    for (y = t; y < b; y++) {
+        const BYTE *s = pd->shadow + (ULONG)y * (ULONG)pd->sstride + (ULONG)l * Bpp;
+        for (x = l; x < r; x++, s += Bpp) {
+            ULONG v = get_px(s, Bpp), X, Y;
+            if (pd->lut_on && pd->bpp > 8) v = lut_px(pd, v);
+            switch (pd->rot) {
+            case 1: X = pd->pw - 1 - (ULONG)y; Y = (ULONG)x; break;
+            case 2: X = pd->pw - 1 - (ULONG)x; Y = pd->ph - 1 - (ULONG)y; break;
+            default: X = (ULONG)y; Y = pd->ph - 1 - (ULONG)x; break;
+            }
+            put_px(fb + Y * (ULONG)pd->stride + X * Bpp, Bpp, v);
+        }
+    }
+}
+
+/* the borders of a scaled desktop */
+static void clear_screen(PDEV *pd)
+{
+    ULONG y;
+    if (!pd->fb) return;
+    for (y = 0; y < pd->ph; y++) memset((BYTE *)pd->fb + y * (ULONG)pd->stride, 0, pd->pw * pd->Bpp);
+}
+
 /* copies a rectangle of the shadow to video memory */
 static void flush_rect(PDEV *pd, LONG l, LONG t, LONG r, LONG b)
 {
@@ -616,7 +858,9 @@ static void flush_rect(PDEV *pd, LONG l, LONG t, LONG r, LONG b)
     if (t < 0) t = 0;
     if (r > (LONG)pd->w) r = (LONG)pd->w;
     if (b > (LONG)pd->h) b = (LONG)pd->h;
-    if (l >= r || t >= b || !pd->win || !pd->shadow) return;
+    if (l >= r || t >= b || !pd->shadow) return;
+    if (!pd->banked) { lfb_flush(pd, l, t, r, b); return; }
+    if (!pd->win) return;
     for (y = t; y < b; y++) {
         ULONG off = (ULONG)y * (ULONG)pd->stride + (ULONG)l * pd->Bpp;
         ULONG n = (ULONG)(r - l) * pd->Bpp;
@@ -699,7 +943,7 @@ static HSURF banked_surface(PDEV *pd, PVOID win)
     HSURF hs;
     pd->win = win;
     pd->pos = (ULONG)-1;
-    pd->vram = 0;
+    if (pd->banked) pd->vram = 0;
     sz.cx = pd->w;
     sz.cy = pd->h;
     pd->sstride = (LONG)((pd->w * pd->Bpp + 3) & ~3UL);
@@ -718,8 +962,9 @@ static HSURF banked_surface(PDEV *pd, PVOID win)
     }
     pd->hsurf = hs;
     if (pd->bpp == 8) load_palette(pd, 0, 256);
+    if (pd->scaled) clear_screen(pd);
     flush_rect(pd, 0, 0, (LONG)pd->w, (LONG)pd->h);
-    TRACE(("EnableSurface banked: window %x gran %x size %x shadow %x\n", (ULONG)(ULONG_PTR)win, pd->gran,
+    TRACE(("EnableSurface shadow: window %x gran %x size %x shadow %x\n", (ULONG)(ULONG_PTR)win, pd->gran,
            pd->winsz, (ULONG)(ULONG_PTR)pd->shadow));
     return hs;
 fail:
@@ -876,6 +1121,52 @@ static ULONG dd_heap_lines(PDEV *pd)
     return lines > pd->h ? lines - pd->h : 0;
 }
 
+/* with a shadow frame buffer (no turning, scaling or colour tables: then
+   there is no DirectDraw) GDI reads the shadow, so what DirectDraw puts on
+   the screen is copied into it */
+static int dd_is_screen(PDEV *pd, PDD_SURFACE_LOCAL s)
+{
+    return (s->ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE) || s->lpGbl->fpVidMem == 0;
+}
+
+static void shadow_pull(PDEV *pd, const RECTL *rc)
+{
+    RECTL r = *rc;
+    LONG y;
+    if (!pd->shadowed || !pd->shadow || !pd->fb || pd->start) return;
+    if (r.left < 0) r.left = 0;
+    if (r.top < 0) r.top = 0;
+    if (r.right > (LONG)pd->w) r.right = (LONG)pd->w;
+    if (r.bottom > (LONG)pd->h) r.bottom = (LONG)pd->h;
+    for (y = r.top; y < r.bottom; y++)
+        memcpy(pd->shadow + (ULONG)y * (ULONG)pd->sstride + (ULONG)r.left * pd->Bpp,
+               (BYTE *)pd->fb + (ULONG)y * (ULONG)pd->stride + (ULONG)r.left * pd->Bpp, (ULONG)(r.right - r.left) * pd->Bpp);
+}
+
+static void shadow_dd_changed(PDEV *pd, PDD_SURFACE_LOCAL s, const RECTL *r)
+{
+    if (pd->shadowed && s && dd_is_screen(pd, s)) shadow_pull(pd, r);
+}
+
+static DWORD APIENTRY DdLock(PDD_LOCKDATA l)
+{
+    PDEV *pd = (PDEV *)l->lpDD->dhpdev;
+    if (pd->shadowed && dd_is_screen(pd, l->lpDDSurface)) {
+        if (l->bHasRect) pd->ddlock = l->rArea;
+        else { pd->ddlock.left = pd->ddlock.top = 0; pd->ddlock.right = (LONG)pd->w; pd->ddlock.bottom = (LONG)pd->h; }
+        pd->ddlocked = 1;
+    }
+    return DDHAL_DRIVER_NOTHANDLED;
+}
+
+#ifndef NT3X
+/* DXT textures of the Direct3D HAL (d3dnt.c): their block size */
+#define DD_CREATE_FOURCC(s, g, f) d3dnt_dxt(g, f, pd->stride)
+#define DD_DESTROY_HOOK(s) d3dnt_destroy(s)
+#endif
+#include "ddblt.c"
+#include "ddovl.c"
+
 static DWORD APIENTRY DdMapMemory(PDD_MAPMEMORYDATA d)
 {
     PDEV *pd = (PDEV *)d->lpDD->dhpdev;
@@ -910,6 +1201,7 @@ static DWORD APIENTRY DdFlip(PDD_FLIPDATA d)
 {
     PDEV *pd = (PDEV *)d->lpDD->dhpdev;
     ULONG off = (ULONG)d->lpSurfTarg->lpGbl->fpVidMem;
+    if (ovl_flip(d)) return DDHAL_DRIVER_HANDLED;
     d->ddRVal = off < pd->vram && dd_set_start(pd, off) ? DD_OK : DDERR_GENERIC;
     return DDHAL_DRIVER_HANDLED;
 }
@@ -943,12 +1235,49 @@ static DWORD APIENTRY DdWaitForVerticalBlank(PDD_WAITFORVERTICALBLANKDATA d)
     return DDHAL_DRIVER_HANDLED;
 }
 
-/* surfaces in the format of the screen only */
+
+/* surfaces in the format of the screen, and the YUV formats of ddblt.c
+   (high and true colour screens) */
 static DWORD APIENTRY DdCanCreateSurface(PDD_CANCREATESURFACEDATA d)
 {
-    d->ddRVal = d->bIsDifferentPixelFormat ? DDERR_INVALIDPIXELFORMAT : DD_OK;
+    PDEV *pd = (PDEV *)d->lpDD->dhpdev;
+    DDPIXELFORMAT *pf = &d->lpDDSurfaceDesc->ddpfPixelFormat;
+    d->ddRVal = DD_OK;
+    if (d->bIsDifferentPixelFormat &&
+        !((d->lpDDSurfaceDesc->dwFlags & DDSD_PIXELFORMAT) && (pf->dwFlags & DDPF_FOURCC) &&
+          is_fourcc_ok(pf->dwFourCC) && pd->bpp >= 15 && g_engine >= DDI_DRIVER_VERSION_NT5)
+#ifndef NT3X
+        && !d3dnt_can_create(d->lpDDSurfaceDesc)    /* textures and Z buffers (Direct3D HAL) */
+#endif
+        )
+        d->ddRVal = DDERR_INVALIDPIXELFORMAT;
+    TRACE(("CanCreateSurface caps %x flags %x diff %u pf %x: %x\n", d->lpDDSurfaceDesc->ddsCaps.dwCaps,
+           d->lpDDSurfaceDesc->dwFlags, d->bIsDifferentPixelFormat, pf->dwFlags, d->ddRVal));
     return DDHAL_DRIVER_HANDLED;
 }
+
+#ifdef DEVDEBUG
+static DWORD APIENTRY DdCreateSurfaceT(PDD_CREATESURFACEDATA c)
+{
+    DWORD r = DdCreateSurface(c), i;
+    for (i = 0; i < c->dwSCnt; i++)
+        TRACE(("CreateSurface %u: caps %x %ux%u fp %x -> %u %x\n", i, c->lplpSList[i]->ddsCaps.dwCaps,
+               c->lplpSList[i]->lpGbl->wWidth, c->lplpSList[i]->lpGbl->wHeight,
+               (ULONG)c->lplpSList[i]->lpGbl->fpVidMem, r, c->ddRVal));
+    return r;
+}
+#define DdCreateSurface DdCreateSurfaceT
+static void d3d_trace(const char *f, ULONG a, ULONG b) { trace(f, a, b); }
+#endif
+#ifndef NT3X
+/* GetDriverInfo (Windows 2000 and later): the Direct3D parts */
+static DWORD APIENTRY DdGetDriverInfo(PDD_GETDRIVERINFODATA d)
+{
+    d->ddRVal = DDERR_CURRENTLYNOTAVAIL;
+    d3dnt_info(d);
+    return DDHAL_DRIVER_HANDLED;
+}
+#endif
 
 BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *phi, DWORD *pdwNumHeaps,
                                    VIDEOMEMORY *pvmList, DWORD *pdwNumFourCC, DWORD *pdwFourCC)
@@ -960,8 +1289,14 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *phi, DWORD *pdwNum
     DDNTCORECAPS *c = &h.ddCaps;
 
     TRACE(("GetDirectDrawInfo vram %x heap lines %u list %x\n", pd->vram, lines, (ULONG)(ULONG_PTR)pvmList));
-    if (!pd->fb || pd->banked) return FALSE;
-    *pdwNumFourCC = 0;
+    /* banked, turned, scaled or through colour tables: DirectDraw would
+       write past what the driver does with the picture */
+    if (!pd->fb || pd->banked || pd->rot || pd->scaled || (pd->lut_on && pd->bpp > 8)) return FALSE;
+    /* YUV surfaces and the overlay: Windows 2000 and later (NT 4.0's
+       DirectDraw 3 does not make them with the driver's block sizes) */
+    n = pd->bpp >= 15 && lines && g_engine >= DDI_DRIVER_VERSION_NT5 ? DD_NFOURCC : 0;
+    *pdwNumFourCC = n;
+    if (pdwFourCC && n) memcpy(pdwFourCC, dd_fourcc, sizeof(dd_fourcc));
     *pdwNumHeaps = lines ? 1 : 0;
     if (pvmList && lines) {
         memset(pvmList, 0, sizeof(*pvmList));
@@ -984,17 +1319,61 @@ BOOL APIENTRY DrvGetDirectDrawInfo(DHPDEV dhpdev, DD_HALINFO *phi, DWORD *pdwNum
         vi->ddpfDisplay.dwBBitMask = pd->bmask;
     }
     vi->dwOffscreenAlign = 8;
+    /* the alignments of the other surface types: Windows 2000 does not
+       enable a HAL that has textures or Z buffers and leaves them 0 */
+    vi->dwOverlayAlign = 8;
+    vi->dwTextureAlign = 8;
+    vi->dwZBufferAlign = 8;
+    vi->dwAlphaAlign = 8;
     vi->pvPrimary = pd->fb;
     c->dwSize = sizeof(*c);
     /* 8 bpp: palettes of the primary surface go through GDI (DrvSetPalette).
        3DDEVICE: Direct3D's software rasterizers (RGB, MMX) may render into
-       flip chains and off-screen surfaces in video memory; there is no
-       Direct3D HAL (no 3D hardware behind VBE) */
+       flip chains and off-screen surfaces in video memory, and on Windows
+       2000/XP WINVBE's own (d3dnt.c, the Direct3D HAL) */
     c->ddsCaps.dwCaps = DDSCAPS_PRIMARYSURFACE | DDSCAPS_OFFSCREENPLAIN | DDSCAPS_3DDEVICE |
                         (lines >= pd->h ? DDSCAPS_FLIP : 0);
     c->dwVidMemTotal = pd->vram;
     c->dwVidMemFree = lines * pd->stride;
+    /* blits by the CPU in the driver (ddblt.c): copies, stretches, fills,
+       source colour keys, YUV to RGB */
+    c->dwCaps = DDCAPS_BLT | DDCAPS_BLTSTRETCH | DDCAPS_BLTCOLORFILL | DDCAPS_COLORKEY |
+                (n ? DDCAPS_BLTFOURCC : 0);
+    c->dwCaps2 = DDCAPS2_NOPAGELOCKREQUIRED | DDCAPS2_WIDESURFACES;
+    c->dwCKeyCaps = DDCKEYCAPS_SRCBLT;
+    c->dwFXCaps = DDFXCAPS_BLTSTRETCHX | DDFXCAPS_BLTSTRETCHY | DDFXCAPS_BLTSHRINKX | DDFXCAPS_BLTSHRINKY |
+                  DDFXCAPS_BLTSTRETCHXN | DDFXCAPS_BLTSTRETCHYN | DDFXCAPS_BLTSHRINKXN | DDFXCAPS_BLTSHRINKYN;
+    c->dwRops[(SRCCOPY >> 16) / 32] |= 1UL << ((SRCCOPY >> 16) % 32);
+    c->dwNumFourCCCodes = n;
+    /* one emulated overlay (ddovl.c), YUV or RGB, with a destination key.
+       Not DDSCAPS_OVERLAY in ddsCaps: Windows 2000 then turns the whole
+       DirectDraw HAL off; overlay surfaces can be made without it */
+    if (n) {
+        c->dwCaps |= DDCAPS_OVERLAY | DDCAPS_OVERLAYSTRETCH | DDCAPS_OVERLAYFOURCC;
+        c->dwCKeyCaps |= DDCKEYCAPS_DESTOVERLAY;
+        c->dwFXCaps |= DDFXCAPS_OVERLAYSTRETCHX | DDFXCAPS_OVERLAYSTRETCHY | DDFXCAPS_OVERLAYSHRINKX |
+                       DDFXCAPS_OVERLAYSHRINKY | DDFXCAPS_OVERLAYSTRETCHXN | DDFXCAPS_OVERLAYSTRETCHYN |
+                       DDFXCAPS_OVERLAYSHRINKXN | DDFXCAPS_OVERLAYSHRINKYN;
+        c->dwMaxVisibleOverlays = 1;
+        c->dwMinOverlayStretch = 1;
+        c->dwMaxOverlayStretch = 32000;
+    }
     if (g_engine >= DDI_DRIVER_VERSION_NT5) {
+#ifndef NT3X
+        /* the Direct3D HAL: WINVBE's software rasterizer (d3dnt.c) in
+           high and true colour, with off-screen video memory */
+        static int d3d_ready = -1;
+        if (d3d_ready < 0) d3d_ready = d3dnt_init();
+#ifdef DEVDEBUG
+        d3dnt_log = d3d_trace;
+#endif
+        d3dnt_mode(pd->fb, pd->vram, pd->bpp, pd->rmask, pd->gmask, pd->bmask,
+                   d3d_ready && lines > 0);
+        d3dnt_halinfo(&h);
+        TRACE(("D3D %u caps %x ddscaps %x\n", d3d_ready, h.ddCaps.dwCaps, h.ddCaps.ddsCaps.dwCaps));
+        h.GetDriverInfo = DdGetDriverInfo;
+        h.dwFlags |= DDHALINFO_GETDRIVERINFOSET;
+#endif
         h.dwSize = sizeof(DD_HALINFO);
         n = sizeof(DD_HALINFO);
     } else {
@@ -1012,19 +1391,51 @@ BOOL APIENTRY DrvEnableDirectDraw(DHPDEV dhpdev, DD_CALLBACKS *cb, DD_SURFACECAL
                                   DD_PALETTECALLBACKS *pcb)
 {
     TRACE(("EnableDirectDraw\n"));
-    cb->dwFlags = DDHAL_CB32_MAPMEMORY | DDHAL_CB32_WAITFORVERTICALBLANK | DDHAL_CB32_CANCREATESURFACE;
+    yuv_init();
+    cb->dwFlags = DDHAL_CB32_MAPMEMORY | DDHAL_CB32_WAITFORVERTICALBLANK | DDHAL_CB32_CANCREATESURFACE |
+                  DDHAL_CB32_CREATESURFACE;
     cb->MapMemory = DdMapMemory;
     cb->WaitForVerticalBlank = DdWaitForVerticalBlank;
     cb->CanCreateSurface = DdCanCreateSurface;
-    scb->dwFlags = DDHAL_SURFCB32_FLIP | DDHAL_SURFCB32_GETFLIPSTATUS;
+    cb->CreateSurface = DdCreateSurface;
+    scb->dwFlags = DDHAL_SURFCB32_FLIP | DDHAL_SURFCB32_GETFLIPSTATUS | DDHAL_SURFCB32_BLT |
+                   DDHAL_SURFCB32_UPDATEOVERLAY | DDHAL_SURFCB32_SETOVERLAYPOSITION | DDHAL_SURFCB32_UNLOCK |
+                   DDHAL_SURFCB32_DESTROYSURFACE | DDHAL_SURFCB32_LOCK;
+    scb->Lock = DdLock;
     scb->Flip = DdFlip;
     scb->GetFlipStatus = DdGetFlipStatus;
+    scb->Blt = DdBlt;
+    scb->UpdateOverlay = DdUpdateOverlay;
+    scb->SetOverlayPosition = DdSetOverlayPosition;
+    scb->Unlock = DdUnlock;
+    scb->DestroySurface = DdDestroySurface;
+    return TRUE;
+}
+
+/* SetDeviceGammaRamp (Windows 2000 and later; DirectDraw gamma controls):
+   the palette in 256 colours, the colour tables of the shadow otherwise */
+BOOL APIENTRY DrvIcmSetDeviceGammaRamp(DHPDEV dhpdev, ULONG fmt, LPVOID ramp)
+{
+    PDEV *pd = (PDEV *)dhpdev;
+    const WORD *rp = ramp;
+    ULONG c, i, id = 1;
+    if (fmt != IGRF_RGB_256WORDS || !rp || pd->banked || (pd->bpp > 8 && !pd->shadowed)) return FALSE;
+    for (c = 0; c < 3; c++)
+        for (i = 0; i < 256; i++) {
+            pd->lut[c][i] = (BYTE)(rp[c * 256 + i] >> 8);
+            if (pd->lut[c][i] != i) id = 0;
+        }
+    pd->lut_on = !id;
+    make_lut16(pd);
+    if (pd->bpp == 8) load_palette(pd, 0, 256);
+    else flush_rect(pd, 0, 0, (LONG)pd->w, (LONG)pd->h);
     return TRUE;
 }
 
 VOID APIENTRY DrvDisableDirectDraw(DHPDEV dhpdev)
 {
     TRACE(("DisableDirectDraw\n"));
+    ovl_reset();
     dd_set_start((PDEV *)dhpdev, 0);
 }
 #endif
@@ -1032,6 +1443,9 @@ VOID APIENTRY DrvDisableDirectDraw(DHPDEV dhpdev)
 EXPORT VOID APIENTRY DrvDisableDriver(VOID)
 {
 }
+
+/* OpenGL ICD support for NT 3.5x and 4.0 */
+#include "glnt.c"
 
 static DRVFN fns[] = {
     { INDEX_DrvEnablePDEV,      (PFN)DrvEnablePDEV },
@@ -1050,6 +1464,7 @@ static DRVFN fns[] = {
     { INDEX_DrvFillPath,        (PFN)DrvFillPath },
     { INDEX_DrvStrokeAndFillPath, (PFN)DrvStrokeAndFillPath },
     { INDEX_DrvPaint,           (PFN)DrvPaint },
+    { INDEX_DrvEscape,          (PFN)DrvEscape },
 #ifndef NOPTR
     { INDEX_DrvSetPointerShape, (PFN)DrvSetPointerShape },
     { INDEX_DrvMovePointer,     (PFN)DrvMovePointer },
@@ -1066,15 +1481,54 @@ static DRVFN fns[] = {
     { INDEX_DrvEnableDirectDraw,  (PFN)DrvEnableDirectDraw },
     { INDEX_DrvDisableDirectDraw, (PFN)DrvDisableDirectDraw },
 #define NDDFN 3
+    /* very last: Windows 2000 and later */
+    { INDEX_DrvIcmSetDeviceGammaRamp, (PFN)DrvIcmSetDeviceGammaRamp },
+#define NT5FN 1
 #endif
 };
 
+/* OPENGL_GETINFO: OPENGL32.DLL asks for the name of the OpenGL ICD; the
+   registry (OpenGLDrivers\WINVBE, set by the INF) names WVBGL32.DLL.
+   WVBGL_ESC_BUFFER: the ICD names the buffer DrvSwapBuffers shows (NT 3.5x
+   and 4.0, glnt.c) */
+#define OPENGL_GETINFO_ 4353
+ULONG APIENTRY DrvEscape(SURFOBJ *pso, ULONG iEsc, ULONG cjIn, PVOID pvIn, ULONG cjOut, PVOID pvOut)
+{
+    static const WCHAR name[] = { 'W', 'I', 'N', 'V', 'B', 'E', 0 };
+    (void)pso;
+    if (iEsc == QUERYESCSUPPORT)
+        return cjIn >= sizeof(ULONG) && pvIn &&
+               (*(ULONG *)pvIn == OPENGL_GETINFO_ || *(ULONG *)pvIn == WVBGL_ESC_STATUS ||
+                (*(ULONG *)pvIn == WVBGL_ESC_BUFFER && gl_on));
+    if (iEsc == WVBGL_ESC_BUFFER)
+        return gl_on ? gl_escape_buffer(cjIn, pvIn) : 0;
+    if (iEsc == WVBGL_ESC_STATUS && pvOut && cjOut >= sizeof(gl_stat)) {
+        memcpy(pvOut, gl_stat, sizeof(gl_stat));
+        return gl_on ? 1 : 2;
+    }
+    if (iEsc == OPENGL_GETINFO_ && pvOut && cjOut >= 2 * sizeof(ULONG) + sizeof(name)) {
+        ULONG *u = (ULONG *)pvOut;
+        u[0] = g_engine < 0x20000 ? 1 : 2;  /* the ICD interface: NT 3.5x want 1 */
+        u[1] = 1;                       /* driver version */
+        memcpy(u + 2, name, sizeof(name));
+        return 1;
+    }
+    return 0;
+}
+
+/* the functions GDI gets: fns (shortened for older engines) and, on NT 3.5x
+   and 4.0, the OpenGL ones of glnt.c */
+static DRVFN fns_run[sizeof(fns) / sizeof(fns[0]) + 3];
+
 EXPORT BOOL APIENTRY DrvEnableDriver(ULONG engine, ULONG cj, DRVENABLEDATA *ded)
 {
-    ULONG nfn = sizeof(fns) / sizeof(fns[0]);
+    ULONG nfn = sizeof(fns) / sizeof(fns[0]), i;
     g_engine = engine;
 #ifdef NT3X
     if (engine < 0x10002) nfn--;            /* NT 3.1 / 3.5: no DrvGetModes */
+#endif
+#ifdef NT5FN
+    if (engine < DDI_DRIVER_VERSION_NT5) nfn -= NT5FN;
 #endif
 #if defined(NDDFN) && defined(NODDRAW4)
     if (engine < DDI_DRIVER_VERSION_NT5) nfn -= NDDFN;     /* NT 4.0: no DirectDraw */
@@ -1085,7 +1539,19 @@ EXPORT BOOL APIENTRY DrvEnableDriver(ULONG engine, ULONG cj, DRVENABLEDATA *ded)
 #else
         ded->iDriverVersion = engine >= DDI_DRIVER_VERSION_NT5 ? DDI_DRIVER_VERSION_NT5 : DDI_DRIVER_VERSION_NT4;
 #endif
+    for (i = 0; i < nfn; i++) fns_run[i] = fns[i];
+#ifdef NT3X
+    gl_on = engine > 0x10000;                   /* NT 3.5 and later (OpenGL) */
+#else
+    gl_on = engine < DDI_DRIVER_VERSION_NT5;    /* 2000 and later ask the ICD */
+#endif
+    if (gl_on) {
+        fns_run[nfn].iFunc = INDEX_DrvDescribePixelFormat; fns_run[nfn++].pfn = (PFN)DrvDescribePixelFormat;
+        fns_run[nfn].iFunc = INDEX_DrvSetPixelFormat;      fns_run[nfn++].pfn = (PFN)DrvSetPixelFormat;
+        fns_run[nfn].iFunc = INDEX_DrvSwapBuffers;         fns_run[nfn++].pfn = (PFN)DrvSwapBuffers;
+        gl_init();
+    }
     if (cj >= 2 * sizeof(ULONG)) ded->c = nfn;
-    if (cj >= sizeof(DRVENABLEDATA)) ded->pdrvfn = fns;
+    if (cj >= sizeof(DRVENABLEDATA)) ded->pdrvfn = fns_run;
     return TRUE;
 }

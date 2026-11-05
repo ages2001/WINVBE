@@ -1,5 +1,6 @@
 /* WINVBECF for Windows NT - resource identifiers */
 #define IDI_APP       1
+#define IDI_UNINST    2
 #define IDD_MAIN      100
 #define IDD_ABOUT     101
 #define IDC_INFO      200
@@ -15,3 +16,26 @@
 #define IDC_ABOUT     210
 #define IDC_STATUS    211
 #define IDC_PATCHLBL  212
+#define IDD_MOUSE     102
+#define IDC_MOUSE     213
+#define IDC_MSPEED    230
+#define IDC_MDBL      231
+#define IDC_MCOLOR    232
+#define IDC_MSWAP     233
+#define IDC_MLARGE    234
+#define IDC_MNOTE     235
+#define IDD_FEATURES  103
+#define IDC_FEATURES  214
+#define IDC_FROT      240
+#define IDC_FSCALE    241
+#define IDC_FSHADOW   242
+#define IDC_FGAMMA    243
+#define IDC_FBRIGHT   244
+#define IDC_FCONTR    245
+#define IDC_FGAMMAV   246
+#define IDC_FBRIGHTV  247
+#define IDC_FCONTRV   248
+#define IDC_FDEFAULT  249
+#define IDC_FAPPLY    250
+#define IDC_FNOTE     251
+#define IDC_FPREVIEW  252

@@ -317,3 +317,90 @@ unhook_int2f:
         pop     dx
         pop     ds
         retf
+
+%ifndef OLDWIN
+; ---------------------------------------------------------------------
+; DIB engine mode (dibeng.c): the drawing entry points GDI calls go to
+; DIBENG.DLL when dibeng_on is set, else to WINVBE's own functions. Only
+; AX, ECX and ES change - not used by the Pascal calling convention.
+; The DIB_xxxExt functions take one more argument (the last one): the
+; screen PDEVICE or the palettized flag, pushed below the return address.
+        extern  dibeng_on           ; BYTE
+        extern  dibe_tab             ; DWORD[]
+        extern  scr_pdev            ; DWORD
+        extern  dib_palettized      ; WORD
+
+%macro DIBFWD 3                     ; stub, own function, dibe_tab index
+        extern  %2
+        global  %1
+%1:
+        mov     ax,DGROUP
+        mov     es,ax
+        cmp     byte [es:dibeng_on wrt DGROUP],0
+        jne     %%dib
+        jmp     far %2
+%%dib:
+        jmp     far [es:dibe_tab + 4*%3 wrt DGROUP]
+%endmacro
+
+%macro DIBFWDP 3                    ; + the screen PDEVICE
+        extern  %2
+        global  %1
+%1:
+        mov     ax,DGROUP
+        mov     es,ax
+        cmp     byte [es:dibeng_on wrt DGROUP],0
+        jne     %%dib
+        jmp     far %2
+%%dib:
+        pop     ecx
+        push    dword [es:scr_pdev wrt DGROUP]
+        push    ecx
+        jmp     far [es:dibe_tab + 4*%3 wrt DGROUP]
+%endmacro
+
+%macro DIBFWDW 3                    ; + the palettized flag
+        extern  %2
+        global  %1
+%1:
+        mov     ax,DGROUP
+        mov     es,ax
+        cmp     byte [es:dibeng_on wrt DGROUP],0
+        jne     %%dib
+        jmp     far %2
+%%dib:
+        pop     ecx
+        push    word [es:dib_palettized wrt DGROUP]
+        push    ecx
+        jmp     far [es:dibe_tab + 4*%3 wrt DGROUP]
+%endmacro
+
+        DIBFWD  W_BITBLT, BITBLT, 0
+        DIBFWD  W_COLORINFO, COLORINFO, 1
+        DIBFWD  W_ENUMDFONTS, ENUMDFONTS, 2
+        DIBFWDP W_ENUMOBJ, ENUMOBJ, 3
+        DIBFWD  W_OUTPUT, OUTPUT, 4
+        DIBFWD  W_PIXEL, PIXEL, 5
+        DIBFWDP W_REALIZEOBJECT, REALIZEOBJECT, 6
+        DIBFWD  W_STRBLT, STRBLT, 7
+        DIBFWD  W_SCANLR, SCANLR, 8
+        DIBFWD  W_DEVICEMODE, DEVICEMODE, 9
+        DIBFWD  W_EXTTEXTOUT, EXTTEXTOUT, 10
+        DIBFWD  W_GETCHARWIDTH, GETCHARWIDTH, 11
+        DIBFWD  W_DEVICEBITMAP, DEVICEBITMAP, 12
+        DIBFWD  W_FASTBORDER, FASTBORDER, 13
+        DIBFWD  W_SETATTRIBUTE, SETATTRIBUTE, 14
+        DIBFWDW W_DEVICEBITMAPBITS, DEVICEBITMAPBITS, 15
+        DIBFWD  W_CREATEBITMAP, CREATEBITMAP, 16
+        DIBFWD  W_DIBTODEVICE, DIBTODEVICE, 17
+        DIBFWDP W_GETPALETTE, GETPALETTE, 18
+        DIBFWDP W_SETPALETTETRANSLATE, SETPALETTETRANSLATE, 19
+        DIBFWDP W_GETPALETTETRANSLATE, GETPALETTETRANSLATE, 20
+        DIBFWDP W_UPDATECOLORS, UPDATECOLORS, 21
+        DIBFWD  W_STRETCHBLT, STRETCHBLT, 22
+        DIBFWD  W_STRETCHDIBITS, STRETCHDIBITS, 23
+        DIBFWD  W_SELECTBITMAP, SELECTBITMAP, 24
+        DIBFWD  W_BITMAPBITS, BITMAPBITS, 25
+        DIBFWD  W_INQUIRE, INQUIRE, 26
+        DIBFWDP W_MOVECURSOR, MOVECURSOR, 28
+%endif

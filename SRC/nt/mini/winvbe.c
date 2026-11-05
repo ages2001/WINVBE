@@ -33,6 +33,11 @@
 /* ntoskrnl (exported since NT 3.1) */
 NTSYSAPI BOOLEAN NTAPI MmIsAddressValid(PVOID VirtualAddress);
 NTSYSAPI PVOID NTAPI IoGetCurrentProcess(VOID);
+#ifdef VGAREPL
+NTSYSAPI NTSTATUS NTAPI ZwOpenKey(PHANDLE, ULONG, POBJECT_ATTRIBUTES);
+NTSYSAPI NTSTATUS NTAPI ZwSetValueKey(HANDLE, PUNICODE_STRING, ULONG, ULONG, PVOID, ULONG);
+NTSYSAPI NTSTATUS NTAPI ZwClose(HANDLE);
+#endif
 
 /* ------------------------------------------------------------------ */
 /* small runtime                                                       */
@@ -95,12 +100,15 @@ typedef struct {
        the display driver draws into a copy in system memory */
     UCHAR  banked, win;
     USHORT gran_kb, winsz_kb;
+    UCHAR  planar;              /* VGA mode 12h, 640x480 in 16 colours (VGA.DLL) */
 } MODE;
 
 typedef struct {
     int    level;               /* 31, 35, 40, 50 */
     int    debug;
     int    gathered;            /* 1 = mode list read, -1 = failed */
+    ULONG  scale;               /* WinVbe.Scale: small modes shown in the native mode */
+    LONG   vcur;                /* the scaled mode set (-1: none) */
     /* Int10 interface (2000+) */
     VIDEO_PORT_INT10_INTERFACE i10;
     int    have_i10;
@@ -811,6 +819,60 @@ static void gather(DEVEXT *dx)
             dx->nmodes--; i--;
         }
     }
+#ifdef VGAREPL
+    /* Windows NT 3.x has no display driver for a linear frame buffer
+       (VGA256.DLL and VGA64K.DLL need a banked VGA window): the VGA.SYS
+       replacement works there like Microsoft's, VGA mode 12h with VGA.DLL */
+    if (dx->level < 40) {
+        MODE *md = &dx->modes[0];
+        memset(md, 0, sizeof(*md));
+        md->vbe = 0x12;
+        md->w = 640; md->h = 480; md->bpp = 4;
+        md->pitch = 80;
+        md->planar = 1;
+        md->attr_vga = 1;
+        md->hzmask = 1;
+        md->phys = 0xA0000;
+        dx->nmodes = 1;
+        dbg("VGA replacement: VGA 640x480x4\n");
+    } else
+    /* the VGA.SYS replacement offers 800x600, else 640x480, in 64K colours
+       (32K when there is no 16 bpp mode), linear frame buffer, BIOS
+       refresh rate: a mode FRAMEBUF.DLL of Windows draws in, and one that
+       every VBE BIOS sets correctly (the native resolution of the monitor
+       is not always a well made BIOS mode) */
+    {
+        USHORT want[2][3];
+        MODE keep[2];
+        ULONG nw = 0, nk = 0, k, j;
+        want[nw][0] = 800; want[nw][1] = 600; want[nw][2] = 16; nw++;
+        want[nw][0] = 640; want[nw][1] = 480; want[nw][2] = 16; nw++;
+        for (k = 0; k < nw; k++) {
+            int best = -1;
+            for (j = 0; j < dx->nmodes; j++) {
+                MODE *m = &dx->modes[j];
+                if (m->banked || m->w != want[k][0] || m->h != want[k][1]) continue;
+                if (m->bpp == 16 || (m->bpp == 15 && best < 0)) best = (int)j;
+            }
+            if (best >= 0) {
+                for (j = 0; j < nk; j++)
+                    if (keep[j].w == dx->modes[best].w && keep[j].h == dx->modes[best].h && keep[j].bpp == dx->modes[best].bpp) break;
+                if (j == nk) { keep[nk] = dx->modes[best]; keep[nk].hzmask = 1; nk++; }
+            }
+        }
+        /* only the best one is offered, so that Windows cannot fall back
+           to a different mode from an older registry setting (the
+           hardware profile of a fresh Windows 2000/XP asks for 640x480
+           in 16 colours); more modes need the full WINVBE driver */
+        if (nk > 1) nk = 1;
+#ifdef TESTPITCH
+        if (nk) keep[0].pitch += TESTPITCH;     /* test: a mode list line length the BIOS does not set */
+#endif
+        for (k = 0; k < nk; k++) dx->modes[k] = keep[k];
+        dx->nmodes = nk;
+        dbg("VGA replacement: %u modes\n", nk);
+    }
+#endif
 fallback:
     /* no VBE graphics mode at all: standard VGA 320x200 in 256 colours,
        so that Windows still starts (instead of "The required system file
@@ -823,12 +885,20 @@ fallback:
         md->attr_vga = 1;
         md->pitch = 320;
         md->hzmask = 1;
-        md->banked = 1; md->gran_kb = 64; md->winsz_kb = 64;
+#ifdef VGAREPL
+        md->banked = 0;                 /* 64000 bytes: linear for FRAMEBUF.DLL */
+#else
+        md->banked = 1;
+#endif
+        md->gran_kb = 64; md->winsz_kb = 64;
         md->phys = 0xA0000;
         dx->nmodes = 1;
         dbg("no VBE graphics modes: VGA 320x200x8\n");
     }
     dx->gathered = 1;
+    dx->vcur = -1;
+    dx->scale = reg_dword(dx, WVB_REG_SCALE, 0);
+    if (dx->scale > 2) dx->scale = 0;
 
     /* information for WINVBECF */
     {
@@ -954,21 +1024,25 @@ static int set_mode1(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
     int done = 0;
     ULONG lin = md->banked ? 0 : 0x4000;
 
-    if (md->vbe == 0x13) {              /* VGA fallback */
+    if (md->vbe == 0x13 || md->planar) {        /* VGA fallback, VGA mode 12h */
         memset(&r, 0, sizeof(r));
-        r.eax = noclear ? 0x0093 : 0x0013;
+        r.eax = (noclear ? 0x80 : 0) | md->vbe;
         int10(dx, &r, 0, 0, 0);
-        dx->cur_pitch = 320;
+        dx->cur_pitch = md->pitch;
         dx->dacbits = 6;
         dx->cur = idx;
         dx->cur_hz = hzi;
         dx->mode_set = 1;
         dx->start = 0;
         dx->bank = 0xFFFFFFFF;
-        dbg("set VGA 13h\n");
+        dbg("set VGA %xh\n", md->vbe);
         return 1;
     }
+#ifdef VGAREPL
+    if (0) {
+#else
     if (hzi < WVB_NHZ && dx->vbever >= 0x300) {
+#endif
         CRTC c;
         fill_crtc(dx, &c, md, wvb_hz[hzi]);
         memset(&r, 0, sizeof(r));
@@ -997,9 +1071,32 @@ static int set_mode1(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
     dx->cur_pitch = md->pitch;
     memset(&r, 0, sizeof(r));
     r.eax = 0x4F06; r.ebx = 1;
+#ifdef VGAREPL
+    /* FRAMEBUF.DLL draws with the line length of the mode list (it never
+       asks again after the mode set): when the card uses another one, the
+       picture is sheared (diagonal stripes), so the BIOS is told to use
+       that length */
+    if (int10(dx, &r, 0, 0, 0) && (USHORT)r.eax == 0x004F && (USHORT)r.ebx != md->pitch &&
+        (USHORT)r.ebx >= md->w * md->Bpp) {
+        ULONG was = (USHORT)r.ebx;
+        memset(&r, 0, sizeof(r));
+        r.eax = 0x4F06; r.ebx = 2; r.ecx = md->pitch;           /* in bytes (VBE 2.0) */
+        if (!int10(dx, &r, 0, 0, 0) || (USHORT)r.eax != 0x004F || (USHORT)r.ebx != md->pitch) {
+            memset(&r, 0, sizeof(r));
+            r.eax = 0x4F06; r.ebx = 0; r.ecx = md->pitch / md->Bpp;   /* in pixels */
+            int10(dx, &r, 0, 0, 0);
+        }
+        memset(&r, 0, sizeof(r));
+        r.eax = 0x4F06; r.ebx = 1;
+        if (int10(dx, &r, 0, 0, 0) && (USHORT)r.eax == 0x004F && (USHORT)r.ebx >= md->w * md->Bpp)
+            dx->cur_pitch = (USHORT)r.ebx;
+        dbg("line length %u, mode list %u, now %u\n", was, md->pitch, dx->cur_pitch);
+    }
+#else
     if (int10(dx, &r, 0, 0, 0) && (USHORT)r.eax == 0x004F && (USHORT)r.ebx >= md->w * md->Bpp &&
         dx->vbever < 0x300)
         dx->cur_pitch = (USHORT)r.ebx;
+#endif
     dx->dacbits = 6;
     if (md->bpp == 8 && (dx->caps & 1) && dx->dac8) {
         memset(&r, 0, sizeof(r));
@@ -1071,9 +1168,29 @@ static void text_mode(DEVEXT *dx)
 /* ------------------------------------------------------------------ */
 /* IOCTLs                                                              */
 
+/* WinVbe.Scale: a mode smaller than the native one of the monitor (EDID)
+   is set as the native mode, and WINVBE.DLL scales the desktop into it;
+   the index of that native mode, or -1 */
+static LONG scaled_native(DEVEXT *dx, ULONG i)
+{
+    MODE *md = &dx->modes[i];
+    ULONG j;
+#ifdef VGAREPL
+    return -1;
+#endif
+    if (!dx->scale || !dx->edid_ok || md->banked || md->planar || md->bpp < 8) return -1;
+    if (md->w > dx->edid_w || md->h > dx->edid_h || (md->w == dx->edid_w && md->h == dx->edid_h)) return -1;
+    for (j = 0; j < dx->nmodes; j++)
+        if (dx->modes[j].w == dx->edid_w && dx->modes[j].h == dx->edid_h && dx->modes[j].bpp == md->bpp &&
+            !dx->modes[j].banked)
+            return (LONG)j;
+    return -1;
+}
+
 static void fill_info(DEVEXT *dx, VIDEO_MODE_INFORMATION *v, ULONG i, ULONG hzi)
 {
     MODE *md = &dx->modes[i];
+    LONG nat = scaled_native(dx, i);
     memset(v, 0, sizeof(*v));
     v->Length = sizeof(*v);
     v->ModeIndex = i * 8 + hzi;
@@ -1088,10 +1205,26 @@ static void fill_info(DEVEXT *dx, VIDEO_MODE_INFORMATION *v, ULONG i, ULONG hzi)
     v->AttributeFlags = VIDEO_MODE_COLOR | VIDEO_MODE_GRAPHICS;
     v->VideoMemoryBitmapWidth = md->w;
     v->VideoMemoryBitmapHeight = md->h;
+    if (md->planar) {
+        /* like VGA.SYS: four planes, 64 KB of video memory per plane */
+        v->NumberOfPlanes = 4;
+        v->BitsPerPlane = 1;
+        v->ScreenStride = 80;
+        v->VideoMemoryBitmapHeight = 0x10000 / 80;
+        v->NumberRedBits = v->NumberGreenBits = v->NumberBlueBits = 6;
+        return;
+    }
     if (md->banked) {
         /* for WINVBE.DLL: granularity and window size in KB */
         v->AttributeFlags |= VIDEO_MODE_BANKED | VIDEO_MODE_NO_OFF_SCREEN;
         v->DriverSpecificAttributeFlags = WVB_BANKED_FLAG | md->gran_kb | ((ULONG)md->winsz_kb << 16);
+    }
+    if (nat >= 0) {
+        MODE *n = &dx->modes[nat];
+        v->VideoMemoryBitmapWidth = n->w;
+        v->VideoMemoryBitmapHeight = n->h;
+        v->ScreenStride = (dx->mode_set && dx->cur == (ULONG)nat) ? dx->cur_pitch : n->pitch;
+        v->DriverSpecificAttributeFlags = WVB_SCALED_FLAG | dx->scale;
     }
     if (md->bpp == 8) {
         UCHAR b = (dx->mode_set && dx->cur == i) ? dx->dacbits : ((dx->caps & 1) && dx->dac8 ? 8 : 6);
@@ -1119,7 +1252,11 @@ static void set_palette(DEVEXT *dx, VIDEO_CLUT *clut, ULONG len)
 {
     ULONG i, n;
     MODE *md = dx->mode_set ? &dx->modes[dx->cur] : 0;
+#ifdef VGAREPL
+    int sh = 0;     /* Windows' display drivers scale to NumberRedBits themselves */
+#else
     int sh = dx->dacbits == 8 ? 0 : 2;
+#endif
     if (len < sizeof(VIDEO_CLUT) - sizeof(VIDEO_CLUTDATA)) return;
     n = clut->NumEntries;
     if (clut->FirstEntry + n > 256) n = 256 - clut->FirstEntry;
@@ -1143,6 +1280,33 @@ static void set_palette(DEVEXT *dx, VIDEO_CLUT *clut, ULONG len)
         outb(0x3C9, clut->LookupTable[i].RgbArray.Green >> sh);
         outb(0x3C9, clut->LookupTable[i].RgbArray.Blue >> sh);
     }
+}
+
+/* the virtual adapters of Bochs, QEMU, VirtualBox and VMware: video memory
+   is ordinary memory there, reading it is fast */
+static int has_str(const char *s, const char *w)
+{
+    for (; *s; s++) {
+        const char *a = s, *b = w;
+        while (*b && *a == *b) { a++; b++; }
+        if (!*b) return 1;
+    }
+    return 0;
+}
+
+static VP_STATUS NTAPI reg_lut_cb(PVOID hw, PVOID ctx, PWSTR name, PVOID data, ULONG len)
+{
+    if (len == 768) memcpy(ctx, data, 768);
+    return NO_ERROR;
+}
+
+static ULONG is_emulator(DEVEXT *dx)
+{
+    USHORT ven = (USHORT)(dx->pcicfg[0] & 0xFFFF);
+    if (ven == 0x1234 || ven == 0x80EE || ven == 0x15AD || ven == 0x1B36 || ven == 0x1AF4) return 1;
+    return has_str(dx->oem, "Bochs") || has_str(dx->oem, "SeaBIOS") || has_str(dx->oem, "VirtualBox") ||
+           has_str(dx->oem, "VBox") || has_str(dx->oem, "VMware") || has_str(dx->oem, "QEMU") ||
+           has_str(dx->oem, "BOCHS") || has_str(dx->oem, "Oracle");
 }
 
 static BOOLEAN NTAPI StartIO(PVOID hw, PVIDEO_REQUEST_PACKET rp)
@@ -1169,6 +1333,10 @@ static BOOLEAN NTAPI StartIO(PVOID hw, PVIDEO_REQUEST_PACKET rp)
         int h;
         VIDEO_MODE_INFORMATION *v = rp->OutputBuffer;
         gather(dx);
+#ifndef VGAREPL
+        dx->scale = reg_dword(dx, WVB_REG_SCALE, 0);        /* WINVBECF changes it at run time */
+        if (dx->scale > 2) dx->scale = 0;
+#endif
         need = count_modes(dx) * sizeof(VIDEO_MODE_INFORMATION);
         if (rp->OutputBufferLength < need) { st = ERROR_INSUFFICIENT_BUFFER; break; }
         for (i = 0; i < dx->nmodes; i++)
@@ -1181,7 +1349,7 @@ static BOOLEAN NTAPI StartIO(PVOID hw, PVIDEO_REQUEST_PACKET rp)
     case IOCTL_VIDEO_QUERY_CURRENT_MODE:
         if (!dx->mode_set) break;
         if (rp->OutputBufferLength < sizeof(VIDEO_MODE_INFORMATION)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
-        fill_info(dx, rp->OutputBuffer, dx->cur, dx->cur_hz);
+        fill_info(dx, rp->OutputBuffer, dx->vcur >= 0 ? (ULONG)dx->vcur : dx->cur, dx->cur_hz);
         info = sizeof(VIDEO_MODE_INFORMATION);
         st = NO_ERROR;
         break;
@@ -1192,6 +1360,20 @@ static BOOLEAN NTAPI StartIO(PVOID hw, PVIDEO_REQUEST_PACKET rp)
         m = ((VIDEO_MODE *)rp->InputBuffer)->RequestedMode;
         i = (m & 0x0FFFFFFF) / 8; h = (m & 0x0FFFFFFF) % 8;
         if (i >= dx->nmodes || h >= WVB_NHZ) { st = ERROR_INVALID_PARAMETER; break; }
+        {
+            LONG nat = scaled_native(dx, i);
+            dx->vcur = -1;
+            if (nat >= 0) {
+                ULONG hh = h;
+                if (!(dx->modes[nat].hzmask & (1 << hh)))
+                    for (hh = 0; hh < WVB_NHZ && !(dx->modes[nat].hzmask & (1 << hh)); hh++) ;
+                if (hh >= WVB_NHZ) hh = 0;
+                st = set_mode(dx, (ULONG)nat, hh, (m & VIDEO_MODE_NO_ZERO_MEMORY) != 0) ? NO_ERROR : ERROR_INVALID_PARAMETER;
+                if (st == NO_ERROR) { dx->vcur = (LONG)i; dbg("scaled %ux%u in %ux%u\n", dx->modes[i].w, dx->modes[i].h,
+                                                               dx->modes[nat].w, dx->modes[nat].h); }
+                break;
+            }
+        }
         st = set_mode(dx, i, h, (m & VIDEO_MODE_NO_ZERO_MEMORY) != 0) ? NO_ERROR : ERROR_INVALID_PARAMETER;
         break;
     }
@@ -1209,10 +1391,10 @@ static BOOLEAN NTAPI StartIO(PVOID hw, PVIDEO_REQUEST_PACKET rp)
             rp->OutputBufferLength < sizeof(VIDEO_MEMORY_INFORMATION)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
         if (!dx->mode_set) break;
         md = &dx->modes[dx->cur];
-        if (md->banked) {
+        if (md->banked || md->planar) {
             /* the VGA window */
             pa.QuadPart = 0xA0000;
-            len = (ULONG)md->winsz_kb << 10;
+            len = md->planar ? 0x10000 : (ULONG)md->winsz_kb << 10;
             io = 0;
             va = ((VIDEO_MEMORY *)rp->InputBuffer)->RequestedVirtualAddress;
             st = VideoPortMapMemory(dx, pa, &len, &io, &va);
@@ -1304,10 +1486,93 @@ static BOOLEAN NTAPI StartIO(PVOID hw, PVIDEO_REQUEST_PACKET rp)
         if (!dx->mode_set) break;
         st = set_bank(dx, *(ULONG *)rp->InputBuffer) ? NO_ERROR : ERROR_INVALID_PARAMETER;
         break;
+#ifdef VGAREPL
+    case IOCTL_VIDEO_QUERY_PUBLIC_ACCESS_RANGES: {
+        /* VGA.DLL programs the VGA registers itself (3B0h-3DFh) */
+        VIDEO_PUBLIC_ACCESS_RANGES *pr = rp->OutputBuffer;
+        PHYSICAL_ADDRESS pa;
+        ULONG len = 0x30, io = 1;
+        PVOID va = NULL;
+        if (rp->OutputBufferLength < sizeof(*pr)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
+        pa.QuadPart = 0x3B0;
+        st = VideoPortMapMemory(dx, pa, &len, &io, &va);
+        if (st != NO_ERROR) break;
+        pr->InIoSpace = 1;
+        pr->MappedInIoSpace = io;
+        pr->VirtualAddress = va;
+        info = sizeof(*pr);
+        break;
+    }
+    case IOCTL_VIDEO_FREE_PUBLIC_ACCESS_RANGES:
+        if (rp->InputBufferLength < sizeof(VIDEO_MEMORY)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
+        st = VideoPortUnmapMemory(dx, ((VIDEO_MEMORY *)rp->InputBuffer)->RequestedVirtualAddress, 0);
+        break;
+    case IOCTL_VIDEO_SET_PALETTE_REGISTERS: {
+        /* attribute controller palette (16 colour modes) */
+        VIDEO_PALETTE_DATA *pd = rp->InputBuffer;
+        ULONG k;
+        if (rp->InputBufferLength < FIELD_OFFSET(VIDEO_PALETTE_DATA, Colors) ||
+            rp->InputBufferLength < FIELD_OFFSET(VIDEO_PALETTE_DATA, Colors) + pd->NumEntries * sizeof(USHORT) ||
+            pd->FirstEntry > 0x10 || pd->FirstEntry + pd->NumEntries > 0x11) { st = ERROR_INVALID_PARAMETER; break; }
+        inb(0x3DA);
+        for (k = 0; k < pd->NumEntries; k++) {
+            outb(0x3C0, (UCHAR)(pd->FirstEntry + k));
+            outb(0x3C0, (UCHAR)pd->Colors[k]);
+        }
+        outb(0x3C0, 0x20);
+        st = NO_ERROR;
+        break;
+    }
+    case IOCTL_VIDEO_GET_BANK_SELECT_CODE: {
+        /* VGA.DLL of NT 3.x asks; mode 12h is not banked (like VGA.SYS) */
+        VIDEO_BANK_SELECT *b = rp->OutputBuffer;
+        if (!dx->mode_set || !dx->modes[dx->cur].planar) break;
+        if (rp->OutputBufferLength < sizeof(*b)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
+        memset(b, 0, sizeof(*b));
+        b->Length = b->Size = sizeof(*b);
+        b->BankingType = b->PlanarHCBankingType = VideoNotBanked;
+        b->BitmapWidthInBytes = 80;
+        b->BitmapSize = 0x10000;
+        b->Granularity = b->PlanarHCGranularity = 0x10000;
+        info = sizeof(*b);
+        st = NO_ERROR;
+        break;
+    }
+#endif
     case IOCTL_VIDEO_SET_COLOR_REGISTERS:
         set_palette(dx, rp->InputBuffer, rp->InputBufferLength);
         st = NO_ERROR;
         break;
+#ifndef VGAREPL
+    case IOCTL_WVB_GET_OPTIONS: {
+        WVBOPT *o = rp->OutputBuffer;
+        ULONG v;
+        if (rp->OutputBufferLength < sizeof(*o)) { st = ERROR_INSUFFICIENT_BUFFER; break; }
+        gather(dx);
+        memset(o, 0, sizeof(*o));
+        o->size = sizeof(*o);
+        v = reg_dword(dx, WVB_REG_ROTATE, 0);
+        o->rotate = v == 90 || v == 180 || v == 270 ? v : 0;
+        o->emulator = is_emulator(dx);
+        v = reg_dword(dx, WVB_REG_SHADOW, 0);
+        o->shadow = v == 1 || (v == 0 && !o->emulator);
+        v = reg_dword(dx, WVB_REG_GAMMA, 100);
+        o->gamma = v < 30 ? 30 : v > 300 ? 300 : v;
+        v = reg_dword(dx, WVB_REG_BRIGHT, 1000);
+        o->bright = v < 900 ? -100 : v > 1100 ? 100 : (long)v - 1000;
+        v = reg_dword(dx, WVB_REG_CONTRAST, 100);
+        o->contrast = v < 20 ? 20 : v > 300 ? 300 : v;
+        v = reg_dword(dx, WVB_REG_SCALE, 0);
+        o->scale = v <= 2 ? v : 0;
+        for (v = 0; v < 768; v++) o->lut[v / 256][v % 256] = (UCHAR)(v % 256);
+        VideoPortGetRegistryParameters(dx, WVB_REG_LUT, FALSE, reg_lut_cb, o->lut);
+        for (v = 0; v < 768; v++)
+            if (o->lut[v / 256][v % 256] != (UCHAR)(v % 256)) { o->lut_on = 1; break; }
+        info = sizeof(*o);
+        st = NO_ERROR;
+        break;
+    }
+#endif
     case IOCTL_WVB_DEBUG:
         if (dx->debug && rp->InputBuffer && rp->InputBufferLength) {
             char b[200];
@@ -1337,6 +1602,48 @@ static VIDEO_ACCESS_RANGE vga_ranges[] = {
     { { { 0xA0000, 0 } }, 0x20000, 0, 1, 1, 0 },
 };
 
+#ifdef VGAREPL
+/* registry key of the service (DriverEntry), "\Device0" is appended */
+static WCHAR repl_key[200];
+
+/* InstalledDisplayDrivers of the device key must be REG_MULTI_SZ (NT 4.0
+   cannot load a display driver named by the REG_BINARY value that
+   VideoPortSetRegistryParameters writes), so the key is written directly:
+   FRAMEBUF.DLL (generic frame buffer driver of NT 4.0 and later), VGA.DLL
+   on NT 3.x */
+static void repl_set_display(DEVEXT *dx)
+{
+    static const WCHAR fb[] = L"framebuf\0", vga[] = L"vga\0";
+    static const WCHAR dev[] = L"\\Device0";
+    static WCHAR name[] = L"InstalledDisplayDrivers";
+    const WCHAR *dll = dx->level >= 40 ? fb : vga;
+    ULONG dlen = dx->level >= 40 ? sizeof(fb) : sizeof(vga);
+    WCHAR path[220];
+    UNICODE_STRING us, vn;
+    OBJECT_ATTRIBUTES oa;
+    HANDLE h;
+    ULONG n, k;
+    NTSTATUS st;
+
+    for (n = 0; repl_key[n] && n < 200; n++) path[n] = repl_key[n];
+    if (!n) return;
+    for (k = 0; dev[k]; k++) path[n++] = dev[k];
+    path[n] = 0;
+    us.Buffer = path; us.Length = (USHORT)(n * sizeof(WCHAR)); us.MaximumLength = us.Length + sizeof(WCHAR);
+    vn.Buffer = name; vn.Length = sizeof(name) - sizeof(WCHAR); vn.MaximumLength = sizeof(name);
+    memset(&oa, 0, sizeof(oa));
+    oa.Length = sizeof(oa);
+    oa.ObjectName = &us;
+    oa.Attributes = OBJ_CASE_INSENSITIVE;
+    st = ZwOpenKey(&h, 0x0002 /* KEY_SET_VALUE */, &oa);
+    if (st >= 0) {
+        st = ZwSetValueKey(h, &vn, 0, 7 /* REG_MULTI_SZ */, (PVOID)dll, dlen);
+        ZwClose(h);
+    }
+    dbg("display driver %S: %x\n", dll, st);
+}
+#endif
+
 static VP_STATUS NTAPI FindAdapter(PVOID hw, PVOID ctx, PWSTR arg, PVIDEO_PORT_CONFIG_INFO ci, PUCHAR again)
 {
     DEVEXT *dx = hw;
@@ -1346,6 +1653,7 @@ static VP_STATUS NTAPI FindAdapter(PVOID hw, PVOID ctx, PWSTR arg, PVIDEO_PORT_C
     g_dx = dx;
     dx->level = ctx ? *(int *)ctx : 50;     /* Windows 2000+ (PnP): no HwContext */
     dx->adapter_power = dx->monitor_power = VideoPowerOn;
+    dx->vcur = -1;
     dx->debug = (int)reg_dword(dx, WVB_REG_DEBUG, 0);
 #ifdef DEVDEBUG
     dx->debug = 1;
@@ -1380,7 +1688,9 @@ static VP_STATUS NTAPI FindAdapter(PVOID hw, PVOID ctx, PWSTR arg, PVIDEO_PORT_C
             dx->i10.Version = VIDEO_PORT_INT10_INTERFACE_VERSION_1;
             if (qs(dx, VideoPortServicesInt10, (PINTERFACE)&dx->i10) == NO_ERROR) {
                 ULONG len = BUFSIZE;
-                dx->i10.InterfaceReference(dx->i10.Context);
+                /* the reference callback of VIDEOPRT.SYS is __stdcall (the
+                   MinGW header declares it without a calling convention) */
+                ((VOID (NTAPI *)(PVOID))dx->i10.InterfaceReference)(dx->i10.Context);
                 if (dx->i10.Int10AllocateBuffer(dx->i10.Context, &dx->bseg, &dx->boff, &len) == NO_ERROR)
                     dx->have_i10 = 1;
             }
@@ -1392,9 +1702,21 @@ static VP_STATUS NTAPI FindAdapter(PVOID hw, PVOID ctx, PWSTR arg, PVIDEO_PORT_C
 #endif
     }
 
+#ifdef VGAREPL
+    /* the VGA.SYS replacement draws with a display driver of Windows
+       itself instead of VGA.DLL (planar 640x480 in 16 colours) */
+    repl_set_display(dx);
+#endif
     ci->VdmPhysicalVideoMemoryAddress.QuadPart = 0xA0000;
     ci->VdmPhysicalVideoMemoryLength = 0x20000;
+#ifdef VGAREPL
+    /* NTVDM shares a buffer of this size with the console (as large as the
+       one of VGA.SYS: registers and four 64 KB planes); 0 makes every
+       16-bit application fail with "The parameter is incorrect" */
+    ci->HardwareStateSize = 0x41000;
+#else
     ci->HardwareStateSize = 0;
+#endif
 
     /* the modes are read at the first request of the display driver: the
        BIOS can only be called from CSRSS on NT 3.x - 2000, and the x64
@@ -1567,12 +1889,40 @@ ULONG NTAPI DriverEntry(PVOID ctx1, PVOID ctx2)
 #ifdef DEVDEBUG
     dputs("WVBNT: DriverEntry\n");
 #endif
+#ifdef VGAREPL
+    {
+        UNICODE_STRING *rk = ctx2;
+        ULONG n = rk && rk->Buffer ? rk->Length / sizeof(WCHAR) : 0;
+        if (n > 190) n = 0;
+        memcpy(repl_key, rk ? rk->Buffer : NULL, n * sizeof(WCHAR));
+        repl_key[n] = 0;
+    }
+#endif
     VideoPortZeroMemory(&d, sizeof(d));
     d.HwFindAdapter = FindAdapter;
     d.HwInitialize = Initialize;
     d.HwStartIO = StartIO;
     d.HwDeviceExtensionSize = sizeof(DEVEXT);
 
+#ifdef VGAREPL
+    /* the VGA.SYS replacement: initialized like Microsoft's VGA.SYS (the
+       VgaSave service is not Plug and Play): no power or child callbacks,
+       PCI, ISA, EISA, MCA, then internal */
+    d.HwInitDataSize = SIZE_OF_W2K_VIDEO_HW_INITIALIZATION_DATA;
+    {
+        static const INTERFACE_TYPE bus[5] = { PCIBus, Isa, Eisa, MicroChannel, Internal };
+        int k;
+        st = 0xC0000059L;
+        for (k = 0; k < 5; k++) {
+            d.AdapterInterfaceType = bus[k];
+            st = VideoPortInitialize(ctx1, ctx2, &d, NULL);
+#ifdef DEVDEBUG
+            { char b[64]; sfmt(b, sizeof(b), "WVBNT: init50 bus %u: %x\n", (ULONG)bus[k], st); dputs(b); }
+#endif
+            if (st == 0 || st == 0xC0000059L) break;
+        }
+    }
+#else
     /* Windows 2000 and later: PnP miniport */
     d.HwInitDataSize = SIZE_OF_W2K_VIDEO_HW_INITIALIZATION_DATA;
     d.AdapterInterfaceType = PCIBus;
@@ -1584,6 +1934,7 @@ ULONG NTAPI DriverEntry(PVOID ctx1, PVOID ctx2)
     st = VideoPortInitialize(ctx1, ctx2, &d, NULL);     /* a PnP miniport must not pass a context */
 #ifdef DEVDEBUG
     { char b[64]; sfmt(b, sizeof(b), "WVBNT: init50 %x\n", st); dputs(b); }
+#endif
 #endif
     if (st != 0xC0000059L) return st;           /* STATUS_REVISION_MISMATCH */
 

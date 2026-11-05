@@ -349,12 +349,19 @@ static int find_windows(int interactive)
         if (!interactive) return 0;
     }
     scan_windows();
-    for (i = 0; i < nfound; i++)
-        if (found_kind[i] != 4 && (def < 0 || !strcmp(found_dir[i], "C:\\WINDOWS"))) def = i;
-    if (!interactive) {
-        if (valid_windir("C:\\WINDOWS")) strcpy(windir, "C:\\WINDOWS");
-        else if (def >= 0) strcpy(windir, found_dir[def]);
-        else return 0;
+    {   /* a default only when there is just one Windows to choose */
+        int ncand = 0;
+        for (i = 0; i < nfound; i++)
+            if (found_kind[i] != 4) { ncand++; def = i; }
+        if (ncand != 1) def = -1;
+    }
+    if (!interactive) {     /* /AUTO, /W: ... without /DIR: */
+        if (def >= 0) strcpy(windir, found_dir[def]);
+        else if (!nfound && valid_windir("C:\\WINDOWS")) strcpy(windir, "C:\\WINDOWS");
+        else {
+            if (nfound) printf("More than one Windows found - choose one with /DIR:\n");
+            return 0;
+        }
         return 1;
     }
     if (nfound) {
@@ -370,19 +377,19 @@ static int find_windows(int interactive)
             else printf("Number, or another Windows directory: ");
         } else
             printf("Windows directory [C:\\WINDOWS]: ");
-        if (!fgets(b, sizeof(b), stdin)) b[0] = 0;
+        if (!fgets(b, sizeof(b), stdin)) return 0;
         norm_dir(b);
         if (!b[0]) {
             if (nfound && def >= 0) sprintf(b, "%d", def + 1);
             else if (!nfound) strcpy(b, "C:\\WINDOWS");
-            else continue;
+            else { printf("Choose the Windows to install for by its number.\n"); tries--; continue; }
         }
         if (b[0] >= '0' && b[0] <= '9') {
             int n = atoi(b);
             if (n < 1 || n > nfound) { printf("Choose 1 to %d.\n", nfound); continue; }
             if (found_kind[n - 1] == 4) {
                 printf("%s is Windows NT: start it and run WINVBECF.EXE from NT\\I386\\NT3X,\n"
-                       "NT\\I386\\NT4-XP or NT\\AMD64 (see README.TXT).\n", found_dir[n - 1]);
+                       "NT\\I386\\NT4-XP or NT\\AMD64 (see README.MD).\n", found_dir[n - 1]);
                 continue;
             }
             strcpy(windir, found_dir[n - 1]);
@@ -391,7 +398,7 @@ static int find_windows(int interactive)
         if (valid_windir(b)) {
             char name[40];
             if (describe_win(b, name) == 4) {
-                printf("%s is Windows NT: use WINVBECF.EXE (see README.TXT).\n", b);
+                printf("%s is Windows NT: use WINVBECF.EXE (see README.MD).\n", b);
                 continue;
             }
             strcpy(windir, b);
@@ -400,6 +407,67 @@ static int find_windows(int interactive)
         printf("%s is not a Windows directory - enter the directory Windows is installed in (e.g. C:\\WIN30).\n", b);
     }
     return 0;
+}
+
+/* IOCTL read (INT 21h 4402h) of the EMM device: fn 01h is the Windows
+   (GEMMIS) import of MS EMM386 and QEMM; JEMM has no fn 01h but fn 06h */
+static int emm_ioctl(int fn, int len)
+{
+    static const char *dev[2] = { "EMMXXXX0", "EMMQXXX0" };
+    unsigned char buf[32];
+    int i, ok = 0;
+    for (i = 0; i < 2 && !ok; i++) {
+        union REGS r;
+        struct SREGS sr;
+        int h;
+        r.x.ax = 0x3D00; r.x.dx = FP_OFF(dev[i]);
+        segread(&sr); sr.ds = FP_SEG(dev[i]);
+        intdosx(&r, &r, &sr);
+        if (r.x.cflag) continue;
+        h = r.x.ax;
+        memset(buf, 0, sizeof(buf));
+        buf[0] = (unsigned char)fn;
+        r.x.ax = 0x4402; r.x.bx = h; r.x.cx = len; r.x.dx = FP_OFF((void far *)buf);
+        segread(&sr); sr.ds = FP_SEG((void far *)buf);
+        intdosx(&r, &r, &sr);
+        ok = !r.x.cflag && r.x.ax == (unsigned)len;
+        r.x.ax = 0x3E00; r.x.bx = h;
+        intdos(&r, &r);
+        if (!r.x.cflag || ok) break;
+    }
+    return ok;
+}
+
+/* DOS in V86 mode under a memory manager (EMM386, QEMM, 386MAX, JEMM)?
+   -> 1, and *nogemmis = 1 when it cannot hand over to Windows 3.x 386
+   enhanced mode (JEMM386/JEMMEX) */
+static int v86_manager(int *nogemmis)
+{
+    unsigned msw = 0;
+    _asm {
+        db 0Fh, 01h, 0E0h       ; smsw ax (286+; Windows 3.x needs one)
+        mov msw, ax
+    }
+    *nogemmis = 0;
+    if (!(msw & 1)) return 0;
+    *nogemmis = !emm_ioctl(1, 6) && emm_ioctl(6, 16);
+    return 1;
+}
+
+/* Windows 3.x and the V86 memory managers (GitHub issue #2) */
+static void memory_manager_note(void)
+{
+    int nog;
+    if (oldwin || win9x || !v86_manager(&nog)) return;
+    printf("\nDOS runs in V86 mode under a memory manager. ");
+    if (nog)
+        printf("It cannot hand over to Windows\n"
+               "386 enhanced mode (JEMM386/JEMMEX lack the Windows (GEMMIS) interface):\n"
+               "only standard mode (WIN /S) works, with the JEMM options NODYN MIN=16384.\n");
+    else
+        printf("Fine for Windows 3.x.\n");
+    printf("In standard mode WINVBE then uses the VGA window instead of the linear\n"
+           "frame buffer, which the memory manager does not map for Windows.\n");
 }
 
 static void print_info(void)
@@ -432,6 +500,98 @@ static int ask_int(char *prompt, int def)
     if (!fgets(b, sizeof(b), stdin)) return def;
     if (b[0] == '\n' || b[0] == 0) return def;
     return atoi(b);
+}
+
+/* ---------------- Windows 3.0 Program Manager groups ----------------
+ * A 3.0 group file keeps its icons in the format of the screen they were
+ * made for (LOGPIXELSX/Y, BITSPIXEL, PLANES at 18h..1Eh of its header) and
+ * loads them from the programs again when the screen differs. Groups saved
+ * at 16 bits per pixel or more before WINVBE 1.2 hold the black and white
+ * icons of 3.0's icon choice (see win30_icon_fix in the driver): clearing
+ * BITSPIXEL (and fixing the checksum) makes Program Manager load them anew.
+ */
+static void win30_groups_reload(void)
+{
+    char pi[160], line[200];
+    FILE *f;
+    int in_groups = 0, n = 0;
+    sprintf(pi, "%s\\PROGMAN.INI", windir);
+    f = fopen(pi, "rt");
+    if (!f) return;
+    while (fgets(line, sizeof(line), f)) {
+        char *q = line, *v, *e;
+        FILE *g;
+        unsigned char hd[32];
+        unsigned cb, sum, i, w;
+        while (*q == ' ' || *q == '\t') q++;
+        if (*q == '[') { in_groups = !strnicmp(q, "[Groups]", 8); continue; }
+        if (!in_groups || strnicmp(q, "Group", 5) || !(v = strchr(q, '='))) continue;
+        v++;
+        while (*v == ' ') v++;
+        for (e = v; *e && *e != '\r' && *e != '\n'; e++) ;
+        *e = 0;
+        g = fopen(v, "r+b");
+        if (!g) continue;
+        if (fread(hd, 1, 32, g) == 32 && !memcmp(hd, "PMCC", 4) && (hd[0x1C] | hd[0x1D])) {
+            cb = hd[6] | (hd[7] << 8);
+            hd[0x1C] = hd[0x1D] = 0;
+            /* checksum: the 16-bit words of the group (cbGroup bytes) add up to 0 */
+            sum = 0;
+            fseek(g, 0, SEEK_SET);
+            for (i = 0; i + 1 < cb; i += 2) {
+                int lo = fgetc(g), hi = fgetc(g);
+                if (hi == EOF) break;
+                w = (unsigned)lo | ((unsigned)hi << 8);
+                if (i == 4) w = 0;
+                if (i == 0x1C) w = 0;
+                sum += w;
+            }
+            if (cb & 1) { int lo = fgetc(g); if (lo != EOF) sum += (unsigned)lo; }
+            sum = (unsigned)(-(int)sum);
+            hd[4] = (unsigned char)sum; hd[5] = (unsigned char)(sum >> 8);
+            fseek(g, 0, SEEK_SET);
+            fwrite(hd, 1, 32, g);
+            n++;
+        }
+        fclose(g);
+    }
+    fclose(f);
+    if (n) printf("Program Manager will load the icons of %d group(s) again (colors).\n", n);
+}
+
+/* ---------------- Program Manager group ----------------
+ * WINVBECF.EXE in WIN.INI run= makes the WINVBE group (WINVBE Display
+ * Settings, WINVBE Mouse, Uninstall WINVBE) at the next start of Windows and
+ * takes itself out of run= again.
+ */
+static void add_run_entry(void)
+{
+    char run[256], *oi = ini, *of = inifile, *ob = inibak, up[256];
+    long ol = inilen;
+    int i;
+    inifile = "WIN.INI"; inibak = "WIN.WVB";
+    if (load_ini()) {
+        ini_get("windows", "run", run, sizeof(run) - 16);
+        for (i = 0; run[i] && i < 255; i++) up[i] = (char)toupper(run[i]);
+        up[i] = 0;
+        if (!strstr(up, "WINVBECF")) {
+            if (run[0]) strcat(run, " ");
+            strcat(run, "WINVBECF.EXE");
+            ini_set("windows", "run", run);
+            save_ini();
+            printf("The WINVBE group of Program Manager is made at the next start of Windows.\n");
+        }
+        free(ini);
+    }
+    /* and a note for WINVBECF: another installer's run= program (QEMM 7.5
+       INSTGRP) may rewrite run= before WINVBECF has read it */
+    inifile = "SYSTEM.INI"; inibak = "SYSTEM.WVB";
+    if (load_ini()) {
+        ini_set("WINVBE", "Shortcuts", "1");
+        save_ini();
+        free(ini);
+    }
+    ini = oi; inifile = of; inibak = ob; inilen = ol;
 }
 
 /* ---------------- Windows 3.x version ----------------
@@ -1147,7 +1307,7 @@ int main(int argc, char **argv)
 {
     int i, w = -1, h = -1, d = -1, hz = 0, large = 0, list = 0, vga = 0, acc = 0, unattended = 0;
     char *s;
-    printf("WINVBE v1.1 Setup - Universal VESA/VGA/SVGA display driver for Windows 1.x-3.11\n\n");
+    printf("WINVBE v1.2 Setup - Universal VESA/VGA/SVGA display driver for Windows 1.x-3.11\n\n");
     strcpy(srcdir, argv[0]);
     s = strrchr(srcdir, '\\');
     if (s) s[1] = 0; else srcdir[0] = 0;
@@ -1175,14 +1335,14 @@ int main(int argc, char **argv)
         intdos(&r, &r);
         if (r.x.bx == 0x3205) {
             printf("This is Windows NT. Use WINVBECF.EXE in NT\\I386\\NT3X, NT\\I386\\NT4-XP or\n"
-                   "NT\\AMD64 instead (see README.TXT).\n");
+                   "NT\\AMD64 instead (see README.MD).\n");
             return 1;
         }
     }
     if (!vq_query(&vi)) printf("No VESA BIOS Extensions found - only standard VGA 320x200x256 will be used.\n");
     vq_sort(&vi);
     if (list) { print_info(); return 0; }
-    if (!find_windows(!unattended && !vga)) {
+    if (!find_windows(!unattended)) {
         printf("Windows directory not found. Use /DIR:C:\\WINDOWS (or /DIR:C:\\WIN30 ...)\n");
         return 1;
     }
@@ -1191,7 +1351,7 @@ int main(int argc, char **argv)
         sprintf(p, "%s\\SYSTEM32\\NTOSKRNL.EXE", windir);
         if (exists(p)) {
             printf("%s is a Windows NT directory. Start Windows NT and use WINVBECF.EXE\n"
-                   "in NT\\I386\\NT3X, NT\\I386\\NT4-XP or NT\\AMD64 (see README.TXT).\n", windir);
+                   "in NT\\I386\\NT3X, NT\\I386\\NT4-XP or NT\\AMD64 (see README.MD).\n", windir);
             return 1;
         }
     }
@@ -1263,5 +1423,15 @@ int main(int argc, char **argv)
         if (acc == 1) acc = 0;          /* 1.x/2.x run in real mode: no LFB */
         return install_old(w, h, d, hz, acc) ? 0 : 1;
     }
-    return install(w, h, d, hz, large, acc) ? 0 : 1;
+    if (!install(w, h, d, hz, large, acc)) return 1;
+    if (!oldwin) add_run_entry();
+    if (!oldwin && !win31) {
+        if (d > 8 && d < 32) win30_groups_reload();
+        if (d == 32)
+            printf("Windows 3.0 at 32 bits per pixel: Program Manager shows its icons in black\n"
+                   "and white (a group of 16 color icons would not fit its 64 KB group file).\n"
+                   "Use 24 or 16 bits per pixel for color icons.\n");
+    }
+    memory_manager_note();
+    return 0;
 }

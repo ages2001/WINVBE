@@ -300,18 +300,28 @@ static BYTE rle_byte(RLESTATE *r)
     return b;
 }
 
+/* pixels an RLE bitmap skips (delta, end of line, end of bitmap) are left
+   untouched on the device: the shell's copy and delete animations draw
+   their frames over the window background this way */
+static BYTE rleset[ROWBUF / 8];
+
 static void rle_put(DIBINFO *di, RLESTATE *r, BYTE v, WORD scan)
 {
-    if (r->y == scan && r->x < di->width && r->x < ROWBUF)
+    if (r->y == scan && r->x < di->width && r->x < ROWBUF) {
         rlebuf[r->x] = v;
+        rleset[r->x >> 3] |= (BYTE)(0x80 >> (r->x & 7));
+    }
     r->x++;
 }
+
+#define RLESET(x) ((x) < ROWBUF && (rleset[(x) >> 3] & (0x80 >> ((x) & 7))))
 
 /* decode until scan 'scan' is complete; rlebuf receives its indices */
 static void rle_decode_scan(DIBINFO *di, RLESTATE *r, WORD scan)
 {
     BYTE four = (di->comp == BI_RLE4);
     memset(rlebuf, 0, ROWBUF);
+    memset(rleset, 0, sizeof(rleset));
     while (!r->eob && r->y <= scan) {
         BYTE cnt = rle_byte(r);
         BYTE val = rle_byte(r);
@@ -402,6 +412,20 @@ static WORD dib_set(SURF *s, SHORT dx, SHORT ytop, WORD start, WORD count, LPBYT
                     }
                     (void)bits_save; (void)raw; (void)rawx;
                 }
+                /* write only the runs of pixels the scan sets */
+                {
+                    WORD i = 0, Bpp = s->mono ? 1 : s->Bpp;
+                    while (i < n) {
+                        WORD j;
+                        while (i < n && !RLESET(sx0 + i)) i++;
+                        j = i;
+                        while (j < n && RLESET(sx0 + j)) j++;
+                        if (j > i) row_write(s, row, x0 + i, j - i, bufD + i * Bpp);
+                        i = j;
+                    }
+                }
+                x0 += n; sx0 += n;
+                continue;
             } else {
                 DWORD rowoff = BANDOFF(di, k, count);
                 WORD bx0 = (WORD)(((DWORD)sx0 * di->bits) >> 3);
@@ -562,6 +586,7 @@ WORD EXPORT DeviceBitmapBits(LPGBITMAP bm, WORD fGet, WORD start, WORD count, LP
     SURF s;
     if (!dib_parse(&di, bmi)) return 0;
     surf_from_dev(&s, bm);
+    DBG("DBB %x ", FP_SEG(bm->bmBits));
     DBG("DBB get=%u bm=%ux%ux%u st=%u n=%u dib=%ux%ux%u comp=%u nc=%u core=%u xlat=%p\n", fGet, bm->bmWidth, bm->bmHeight,
         bm->bmBitsPixel, start, count, di.width, di.height, di.bits, di.comp, di.ncolors, di.core, xlat);
     if (fGet) {
@@ -603,6 +628,16 @@ WORD EXPORT DeviceBitmapBits(LPGBITMAP bm, WORD fGet, WORD start, WORD count, LP
         dbg_printf("\n");
         return r;
     }
+#ifdef BLTDBG
+    if (g.debug == 1 && s.Bpp == 4 && di.width == 32 && di.height == 32) {
+        WORD r = dib_set(&s, 0, (SHORT)(di.height - start - count), start, count, bits, &di, NULL, xlat), k;
+        row_read(&s, 16, 0, 32, bufS);
+        dbg_printf("DBB %x row16:", FP_SEG(bm->bmBits));
+        for (k = 0; k < 32; k++) dbg_printf(" %lx", ((LPDWORD)bufS)[k]);
+        dbg_printf("\n");
+        return r;
+    }
+#endif
     return dib_set(&s, 0, (SHORT)(di.height - start - count), start, count, bits, &di, NULL, xlat);
 }
 
@@ -619,8 +654,11 @@ WORD EXPORT DIBToDevice(LPVOID lpDev, SHORT x, SHORT y, WORD start, WORD count, 
     if (s.screen && !g.enabled) return count;
     ytop = y + (SHORT)di.height - (SHORT)(start + count);
 #ifdef DIBDBG
-    DBG("D2D x=%d y=%d start=%u count=%u %ux%u bpp=%u td=%u bits=%x:%x lim=%lx\n", x, y, start, count, di.width,
-        di.height, di.bits, di.topdown, FP_SEG(bits), FP_OFF(bits), seg_limit(FP_SEG(bits)));
+    DBG("D2D x=%d y=%d start=%u count=%u %ux%u bpp=%u td=%u bits=%x:%x lim=%lx xlat=%x:%x nc=%u tab:", x, y, start, count, di.width,
+        di.height, di.bits, di.topdown, FP_SEG(bits), FP_OFF(bits), seg_limit(FP_SEG(bits)), FP_SEG(xlat), FP_OFF(xlat), di.ncolors);
+    { WORD k; for (k = 0; k < 24 && k < di.ncolors * 4; k++) DBG(" %02x", di.colors[k]); }
+    if (xlat) { WORD k; DBG(" xl:"); for (k = 0; k < 8; k++) DBG(" %04x", xlat[k]); }
+    DBG("\n");
 #endif
     dcm_begin(xlat);
     if (s.screen) {
@@ -653,6 +691,13 @@ WORD EXPORT StretchDIBits(LPVOID lpDev, WORD fGet, SHORT dx, SHORT dy, SHORT dw,
     SHORT cl, ct, cr, cb, y, lastscan = -32768;
     if (fGet) return (WORD)-1;
     if (!dib_parse(&di, bmi) || (di.comp != BI_RGB && di.comp != BI_BITFIELDS)) return (WORD)-1;
+#ifdef DIBDBG
+    DBG("SDB %x ", ((LPGBITMAP)lpDev)->bmType ? 0 : FP_SEG(((LPGBITMAP)lpDev)->bmBits));
+    DBG("SDB %d,%d %dx%d <- %d,%d %dx%d %ux%u bpp=%u rop=%lx cinfo=%x:%x nc=%u tab:", dx, dy, dw, dh, sx, sy, sw, sh,
+        di.width, di.height, di.bits, rop, FP_SEG(cinfo), FP_OFF(cinfo), di.ncolors);
+    { WORD k; for (k = 0; k < 24 && k < di.ncolors * 4; k++) DBG(" %02x", di.colors[k]); }
+    DBG("\n");
+#endif
     if (!dw || !dh || !sw || !sh) return 1;
     if (dw < 0) { dx += dw + 1; dw = -dw; flipx ^= 1; }
     if (dh < 0) { dy += dh + 1; dh = -dh; flipy ^= 1; }

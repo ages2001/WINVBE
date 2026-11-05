@@ -1,4 +1,4 @@
-; WINVBE v1.1 - Universal VESA/VGA/SVGA display driver
+; WINVBE v1.2 - Universal VESA/VGA/SVGA display driver
 ; Windows 95/98/ME: Device Manager > Display adapters > (adapter) > Properties >
 ;   Driver > Change Driver (Update Driver) > Have Disk > path of this folder
 
@@ -12,7 +12,7 @@ DefaultDestDir=11
 WINVBE.CopyCF=10
 
 [SourceDisksNames]
-1="WINVBE v1.1",,0
+1="WINVBE v1.2",,0
 
 [SourceDisksFiles]
 winvbe.drv=1
@@ -20,6 +20,10 @@ winvbe.386=1
 winvbecf.exe=1
 wvbpower.scr=1
 915patch.vxd=1
+wvbdd32.dll=1
+wvbgl32.dll=1
+wvbglx.dll=1
+wvbgls.dll=1
 
 [Manufacturer]
 %WVB%=WINVBE.Models
@@ -31,13 +35,19 @@ wvbpower.scr=1
 [WINVBE.Install]
 CopyFiles=WINVBE.Copy, WINVBE.CopyCF
 DelReg=WINVBE.DelReg
-AddReg=WINVBE.AddReg, WINVBE.RunOnce
+AddReg=WINVBE.AddReg, WINVBE.RunOnce, WINVBE.OpenGL
 UpdateInis=WINVBE.Inis
 
 [WINVBE.Copy]
 winvbe.drv
 winvbe.386
 915patch.vxd
+; the DirectDraw/Direct3D HAL and the OpenGL ICD (WVBGL32 picks the
+; x87 or the SSE2 build of the renderer)
+wvbdd32.dll
+wvbgl32.dll
+wvbglx.dll
+wvbgls.dll
 
 ; WINVBE.386: switches the VMware SVGA II mode off for full-screen MS-DOS
 [WINVBE.Inis]
@@ -52,6 +62,11 @@ wvbpower.scr
 ; 915PATCH.VXD again)
 [WINVBE.RunOnce]
 HKLM,"Software\Microsoft\Windows\CurrentVersion\RunOnce",WINVBE915,,"%10%\winvbecf.exe /915"
+HKLM,"Software\Microsoft\Windows\CurrentVersion\RunOnce",WINVBESETUP,,"%10%\winvbecf.exe /SETUP"
+
+; OPENGL32.DLL asks the display driver for its ICD (OPENGL_GETINFO: "WINVBE")
+[WINVBE.OpenGL]
+HKLM,"Software\Microsoft\Windows\CurrentVersion\OpenGLDrivers",WINVBE,,wvbgl32.dll
 
 [WINVBE.DelReg]
 HKR,,Ver

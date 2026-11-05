@@ -6,8 +6,9 @@
  *
  *  - shows the adapter, the monitor (EDID) and the 915 patch result, from
  *    the WinVbe.Info value the miniport writes into its device key;
- *  - resolution, colors and refresh rate: ChangeDisplaySettings (NT 3.51
- *    and later) or DefaultSettings.* in the device key (NT 3.1 / 3.5);
+ *  - resolution, colors and refresh rate: ChangeDisplaySettings (NT 4.0
+ *    and later) or DefaultSettings.* in the device key (NT 3.x: the
+ *    ChangeDisplaySettings of NT 3.51 reports success but changes nothing);
  *  - miniport options (refresh rates offered, 8-bit DAC, debug log, 915
  *    patch command): device key, effective after a restart;
  *  - "Install driver": NT 3.x / 4.0 copy the files and write the service
@@ -15,6 +16,8 @@
  */
 #include <windows.h>
 #include "cfgres.h"
+static INT_PTR CALLBACK mouse_proc(HWND d, UINT m, WPARAM wp, LPARAM lp);
+static INT_PTR CALLBACK features_proc(HWND d, UINT m, WPARAM wp, LPARAM lp);
 
 #pragma pack(push, 1)
 typedef struct { unsigned short w, h; unsigned char bpp, hzmask; unsigned short vbe; } WVBMODE;
@@ -39,6 +42,13 @@ static const unsigned short hz_tab[6] = { 60, 70, 72, 75, 85, 100 };
 #define V_PATCH   "WinVbe.Patch915"
 #define V_DAC8    "WinVbe.Dac8"
 #define V_DEBUG   "WinVbe.Debug"
+#define V_ROTATE  "WinVbe.Rotate"
+#define V_SHADOW  "WinVbe.Shadow"
+#define V_GAMMA   "WinVbe.Gamma"
+#define V_BRIGHT  "WinVbe.Brightness"
+#define V_CONTR   "WinVbe.Contrast"
+#define V_LUT     "WinVbe.Lut"
+#define V_SCALE   "WinVbe.Scale"
 
 static HINSTANCE hinst;
 static int ntmaj, ntmin;
@@ -48,7 +58,7 @@ static WVBINFO info;
 static int have_info;
 static int cur_w, cur_h, cur_bpp, cur_hz;
 static int sel_w, sel_h;            /* selected resolution */
-static int o_rates, o_dac8, o_debug;
+static int o_rates, o_dac8, o_debug, o_rot;
 static char o_patch[160];
 
 typedef LONG (WINAPI *PCDS)(DEVMODEA *, DWORD);
@@ -167,6 +177,7 @@ static void load_info(void)
     o_rates = (int)reg_dword(k, V_REFRESH, 0);
     o_dac8 = (int)reg_dword(k, V_DAC8, 1);
     o_debug = (int)reg_dword(k, V_DEBUG, 0);
+    o_rot = (int)reg_dword(k, V_ROTATE, 0);
     if (!reg_str(k, V_PATCH, o_patch, sizeof(o_patch))) scpy(o_patch, "AUTO", sizeof(o_patch));
     RegCloseKey(k);
 }
@@ -195,7 +206,8 @@ static void fill_info(HWND d)
     if (!devkey[0]) {
         SetDlgItemTextA(d, IDC_INFO, "WINVBE is not the active display driver.\r\n"
                         "Use \"Install driver\" (Windows NT 3.x / 4.0), or install WINVBE.INF "
-                        "with Device Manager (Windows 2000 and later), and restart.");
+                        "with Device Manager (Windows 95/98/ME: the INF of the WIN9X folder; "
+                        "Windows 2000 and later: this folder), and restart.");
         return;
     }
     if (!have_info) {
@@ -225,6 +237,16 @@ static void fill_info(HWND d)
     SetDlgItemTextA(d, IDC_INFO, b);
 }
 
+static int cur_turned;
+
+static int info_has(int w, int h)
+{
+    unsigned long i;
+    for (i = 0; i < info.nmodes; i++)
+        if (info.modes[i].w == w && info.modes[i].h == h) return 1;
+    return 0;
+}
+
 static void current_mode(HWND d)
 {
     HDC dc = GetDC(NULL);
@@ -232,6 +254,13 @@ static void current_mode(HWND d)
     cur_w = GetDeviceCaps(dc, HORZRES);
     cur_h = GetDeviceCaps(dc, VERTRES);
     cur_bpp = GetDeviceCaps(dc, BITSPIXEL) * GetDeviceCaps(dc, PLANES);
+    /* a turned desktop (WINVBE.DLL offers every mode the other way round
+       too): the mode of the card is h x w */
+    cur_turned = 0;
+    if (have_info && !info_has(cur_w, cur_h) && info_has(cur_h, cur_w)) {
+        int t = cur_w; cur_w = cur_h; cur_h = t;
+        cur_turned = 1;
+    }
     cur_hz = (ntmaj >= 4) ? GetDeviceCaps(dc, 116 /* VREFRESH */) : 0;
     ReleaseDC(NULL, dc);
     if (cur_hz > 1)
@@ -374,7 +403,9 @@ static void nt3_setup_video(int w, int h, int bpp);
 static int apply(HWND d)
 {
     int reboot = 0, w = sel_w, h = sel_h, bpp = sel_bpp(d), hz = sel_hz(d);
+    int dw = w, dh = h;                 /* the desktop: turned by 90/270 degrees */
     HKEY k = open_dev(KEY_READ | KEY_WRITE);
+    if (cur_turned) { dw = h; dh = w; }
     if (!k) {
         MessageBoxA(d, "WINVBE is not the active display driver (or no administrator rights).", "WINVBE",
                     MB_OK | MB_ICONEXCLAMATION);
@@ -404,7 +435,7 @@ static int apply(HWND d)
             dm.dmSize = (WORD)(ntmaj >= 4 ? sizeof(dm) : 0x9C);
             dm.dmSpecVersion = DM_SPECVERSION;
             dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | (hz ? DM_DISPLAYFREQUENCY : 0);
-            dm.dmPelsWidth = w; dm.dmPelsHeight = h; dm.dmBitsPerPel = bpp; dm.dmDisplayFrequency = hz;
+            dm.dmPelsWidth = dw; dm.dmPelsHeight = dh; dm.dmBitsPerPel = bpp; dm.dmDisplayFrequency = hz;
             r = pChangeDS(&dm, CDS_UPDATEREGISTRY);
             if (r == DISP_CHANGE_RESTART)
                 reboot = 1;
@@ -417,8 +448,8 @@ static int apply(HWND d)
             }
         } else {
             /* NT 3.1 / 3.5: the display driver reads these at start-up */
-            reg_set_dword(k, "DefaultSettings.XResolution", w);
-            reg_set_dword(k, "DefaultSettings.YResolution", h);
+            reg_set_dword(k, "DefaultSettings.XResolution", dw);
+            reg_set_dword(k, "DefaultSettings.YResolution", dh);
             reg_set_dword(k, "DefaultSettings.BitsPerPel", bpp);
             reg_set_dword(k, "DefaultSettings.VRefresh", hz ? hz : 60);
             reboot = 1;
@@ -625,6 +656,37 @@ static int install_nt3_4(HWND d)
             return 0;
         }
     }
+    /* the OpenGL ICD (NT 3.5, 3.51, 4.0; NT 3.1 has no OpenGL), when its
+       files are in the folder: WVBGL32.DLL and its two renderers, and the
+       OpenGLDrivers entry OPENGL32.DLL looks for (the value; NT 4.0 also
+       the key) */
+    if (!(ntmaj == 3 && ntmin == 10)) {
+        static const char *gl[3] = { "WVBGL32.DLL", "WVBGLX.DLL", "WVBGLS.DLL" };
+        int ok = 1;
+        for (i = 0; i < 3; i++) {
+            scpy(src, exedir, sizeof(src)); scat(src, gl[i], sizeof(src));
+            scpy(dst, sys, sizeof(dst)); scat(dst, "\\", sizeof(dst)); scat(dst, gl[i], sizeof(dst));
+            if (GetFileAttributesA(src) == 0xFFFFFFFF) { ok = 0; break; }
+            if (!sieq(src, dst) && !put_file(src, dst)) { ok = 0; break; }
+        }
+        if (ok) {
+            HKEY g = mk(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\OpenGLDrivers");
+            if (g) {
+                RegSetValueExA(g, "WINVBE", 0, REG_SZ, (BYTE *)"wvbgl32.dll", 12);
+                if (ntmaj >= 4) {
+                    HKEY w = mk(g, "WINVBE");
+                    if (w) {
+                        RegSetValueExA(w, "Dll", 0, REG_SZ, (BYTE *)"wvbgl32", 8);
+                        reg_set_dword(w, "DriverVersion", 1);
+                        reg_set_dword(w, "Flags", 1);
+                        reg_set_dword(w, "Version", 2);
+                        RegCloseKey(w);
+                    }
+                }
+                RegCloseKey(g);
+            }
+        }
+    }
     disable_old();
     s = mk(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services\\winvbe");
     if (!s) { MessageBoxA(d, "Cannot write the registry (administrator rights?).", "WINVBE", MB_OK | MB_ICONSTOP); return 0; }
@@ -667,6 +729,18 @@ static int install_nt3_4(HWND d)
         RegSetValueExA(s, "EventMessageFile", 0, REG_EXPAND_SZ, (BYTE *)msg, sizeof(msg));
         reg_set_dword(s, "TypesSupported", 7);
         RegCloseKey(s);
+    }
+    {
+        /* the shortcuts point at the WINVBECF.EXE in the system folder */
+        char exe[MAX_PATH + 16];
+        STARTUPINFOA si;
+        PROCESS_INFORMATION pi;
+        scpy(exe, sys, sizeof(exe)); scat(exe, "\\winvbecf.exe /SETUP", sizeof(exe));
+        memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
+        if (CreateProcessA(NULL, exe, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, 30000);
+            CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+        }
     }
     status(d, "WINVBE installed (800x600, 64K colors). Restart Windows.");
     restart(d);
@@ -721,6 +795,31 @@ static int install_pnp(HWND d)
         else if (!err) err = GetLastError();
     }
     if (h != INVALID_HANDLE_VALUE) ds(h);
+    if (!done) {
+        /* a display controller without any driver yet (a fresh Windows 2000
+           shows it under "Other devices" as "Video Controller (VGA
+           Compatible)") is in no class: look through all present devices
+           for a compatible ID PCI\CC_03xx */
+        h = gcd(NULL, NULL, NULL, 2 | 4 /* DIGCF_PRESENT | DIGCF_ALLCLASSES */);
+        for (i = 0; h != INVALID_HANDLE_VALUE && en(h, i, &di); i++) {
+            char cid[512], *c;
+            int vga = 0;
+            memset(cid, 0, sizeof(cid));
+            if (!gp(h, &di, 2 /* SPDRP_COMPATIBLEIDS */, NULL, (PBYTE)cid, sizeof(cid) - 2, NULL)) continue;
+            for (c = cid; *c && !vga; c += slen(c) + 1) {
+                const char *pre = "pci\\cc_03";
+                int k;
+                for (k = 0; pre[k] && lower(c[k]) == pre[k]; k++) ;
+                if (!pre[k]) vga = 1;
+            }
+            if (!vga) continue;
+            memset(hw, 0, sizeof(hw));
+            if (!gp(h, &di, 1 /* SPDRP_HARDWAREID */, NULL, (PBYTE)hw, sizeof(hw) - 2, NULL) || !hw[0]) continue;
+            if (upd(d, hw, inf, 1 /* INSTALLFLAG_FORCE */, &rb)) done = 1;
+            else if (!err) err = GetLastError();
+        }
+        if (h != INVALID_HANDLE_VALUE) ds(h);
+    }
     if (!done && (upd(d, "PCI\\CC_0300", inf, 1, &rb) || upd(d, "PCI\\CC_0001", inf, 1, &rb)))
         done = 1;
     if (!done) {
@@ -774,8 +873,8 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT msg, WPARAM wp, LPARAM lp)
             ShowWindow(GetDlgItem(d, IDC_PATCHLBL), SW_HIDE);
             ShowWindow(GetDlgItem(d, IDC_PATCH), SW_HIDE);
         }
-        if (ntmaj == 3 && ntmin < 51)
-            status(d, "Windows NT 3.1 / 3.5: a new mode takes effect after a restart.");
+        if (ntmaj == 3)
+            status(d, "Windows NT 3.x: a new mode takes effect after a restart.");
         return TRUE;
     }
     case WM_COMMAND:
@@ -798,6 +897,20 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT msg, WPARAM wp, LPARAM lp)
         case IDC_ABOUT:
             DialogBoxParamA(hinst, MAKEINTRESOURCEA(IDD_ABOUT), d, about_proc, 0);
             return TRUE;
+        case IDC_MOUSE:
+            DialogBoxParamA(hinst, MAKEINTRESOURCEA(IDD_MOUSE), d, mouse_proc, 0);
+            return TRUE;
+        case IDC_FEATURES:
+            if (!devkey[0]) {
+                MessageBoxA(d, "WINVBE is not the active display driver.", "WINVBE", MB_OK | MB_ICONINFORMATION);
+                return TRUE;
+            }
+            if (DialogBoxParamA(hinst, MAKEINTRESOURCEA(IDD_FEATURES), d, features_proc, 0) == 1) {
+                load_info();
+                current_mode(d);
+                if (have_info) fill_modes(d);
+            }
+            return TRUE;
         case IDOK:
             if (!devkey[0]) { EndDialog(d, 0); return TRUE; }
             if (apply(d)) EndDialog(d, 1);
@@ -809,6 +922,145 @@ static INT_PTR CALLBACK main_proc(HWND d, UINT msg, WPARAM wp, LPARAM lp)
         break;
     }
     return FALSE;
+}
+
+/* ---------------- WINVBE Mouse (WINVBECF /MOUSE) ----------------
+   speeds and buttons through SystemParametersInfo; Windows NT draws the
+   pointer itself (its look: Control Panel > Mouse > Pointers, NT 4.0 on) */
+static const int ms_th1[5] = { 0, 10, 6, 4, 2 }, ms_th2[5] = { 0, 0, 10, 6, 4 }, ms_acc[5] = { 0, 1, 1, 2, 2 };
+static const char *ms_names[5] = { "Slowest", "Slow", "Normal", "Fast", "Fastest" };
+static const int md_ms[3] = { 900, 500, 300 };
+static const char *md_names[3] = { "Slow", "Normal", "Fast" };
+static const char *mc_names[1] = { "Standard" };
+
+static void m_list(HWND d, int id, const char **n, int k, int sel)
+{
+    int i;
+    SendDlgItemMessageA(d, id, LB_RESETCONTENT, 0, 0);
+    for (i = 0; i < k; i++) SendDlgItemMessageA(d, id, LB_ADDSTRING, 0, (LPARAM)n[i]);
+    SendDlgItemMessageA(d, id, LB_SETCURSEL, sel, 0);
+}
+
+static INT_PTR CALLBACK mouse_proc(HWND d, UINT m, WPARAM wp, LPARAM lp)
+{
+    (void)lp;
+    if (m == WM_INITDIALOG) {
+        int v[3], i, best = 2, bd = 32767, dbl = (int)GetDoubleClickTime();
+        if (!SystemParametersInfoA(SPI_GETMOUSE, 0, v, 0)) { v[0] = 6; v[1] = 10; v[2] = 1; }
+        for (i = 0; i < 5; i++) {
+            int x = (v[2] - ms_acc[i]) * 8;
+            if (x < 0) x = -x;
+            x += v[0] > ms_th1[i] ? v[0] - ms_th1[i] : ms_th1[i] - v[0];
+            if (x < bd) { bd = x; best = i; }
+        }
+        m_list(d, IDC_MSPEED, ms_names, 5, best);
+        m_list(d, IDC_MDBL, md_names, 3, dbl >= 700 ? 0 : dbl >= 400 ? 1 : 2);
+        m_list(d, IDC_MCOLOR, mc_names, 1, 0);
+        CheckDlgButton(d, IDC_MSWAP, GetSystemMetrics(SM_SWAPBUTTON) ? BST_CHECKED : BST_UNCHECKED);
+        SetDlgItemTextA(d, IDC_MNOTE, ntmaj >= 4 ?
+                        "Windows NT draws the pointer itself: its color and size are in Control Panel > "
+                        "Mouse > Pointers." : "Windows NT draws the pointer itself.");
+        return TRUE;
+    }
+    if (m == WM_COMMAND) {
+        if (LOWORD(wp) == IDOK) {
+            int sp = (int)SendDlgItemMessageA(d, IDC_MSPEED, LB_GETCURSEL, 0, 0);
+            int db = (int)SendDlgItemMessageA(d, IDC_MDBL, LB_GETCURSEL, 0, 0);
+            int v[3];
+            if (sp < 0 || sp > 4) sp = 2;
+            if (db < 0 || db > 2) db = 1;
+            v[0] = ms_th1[sp]; v[1] = ms_th2[sp]; v[2] = ms_acc[sp];
+            SystemParametersInfoA(SPI_SETMOUSE, 0, v, SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE);
+            SystemParametersInfoA(SPI_SETDOUBLECLICKTIME, (UINT)md_ms[db], NULL, SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE);
+            SystemParametersInfoA(SPI_SETMOUSEBUTTONSWAP, IsDlgButtonChecked(d, IDC_MSWAP) == BST_CHECKED, NULL,
+                                  SPIF_UPDATEINIFILE | SPIF_SENDWININICHANGE);
+            EndDialog(d, 1);
+            return TRUE;
+        }
+        if (LOWORD(wp) == IDCANCEL) { EndDialog(d, 0); return TRUE; }
+    }
+    return FALSE;
+}
+
+/* ---------------- shortcuts (WINVBECF /SETUP, /UNINSTALL) ----------------
+   Program Manager group (Windows NT 3.x) or Start menu folder (NT 4.0 and
+   later: the shell takes Program Manager's DDE commands) "WINVBE" with
+   WINVBE Display Settings and WINVBE Mouse; Uninstall WINVBE only on NT
+   3.x, which has no Add/Remove Programs. */
+static HDDEDATA CALLBACK dde_cb(UINT t, UINT f, HCONV c, HSZ a, HSZ b, HDDEDATA d, ULONG_PTR x, ULONG_PTR y)
+{
+    (void)t; (void)f; (void)c; (void)a; (void)b; (void)d; (void)x; (void)y;
+    return NULL;
+}
+
+static int progman_exec(const char *cmds)
+{
+    DWORD inst = 0;
+    HSZ hs;
+    HCONV cv;
+    int ok = 0;
+    if (DdeInitializeA(&inst, dde_cb, APPCMD_CLIENTONLY, 0) != DMLERR_NO_ERROR) return 0;
+    hs = DdeCreateStringHandleA(inst, "PROGMAN", CP_WINANSI);
+    cv = DdeConnect(inst, hs, hs, NULL);
+    if (!cv && ntmaj == 3) {
+        WinExec("progman.exe", SW_SHOWMINNOACTIVE);
+        Sleep(3000);
+        cv = DdeConnect(inst, hs, hs, NULL);
+    }
+    if (cv) {
+        ok = DdeClientTransaction((LPBYTE)cmds, (DWORD)slen(cmds) + 1, cv, NULL, 0, XTYP_EXECUTE, 15000, NULL) != NULL;
+        DdeDisconnect(cv);
+    }
+    DdeFreeStringHandle(inst, hs);
+    DdeUninitialize(inst);
+    return ok;
+}
+
+static void shortcuts_setup(void)
+{
+    char me[MAX_PATH], c[3 * MAX_PATH + 300];
+    GetModuleFileNameA(NULL, me, sizeof(me));
+    if (ntmaj >= 4) {
+        /* the Start menu folder is there already (Windows 2000 runs the
+           RunOnce entry of the INF at once and again at the next logon):
+           do not open it a second time */
+        typedef BOOL (WINAPI *PSFP)(HWND, LPSTR, int, BOOL);
+        HMODULE sh = LoadLibraryA("shell32.dll");
+        PSFP sfp = sh ? (PSFP)GetProcAddress(sh, "SHGetSpecialFolderPathA") : NULL;
+        static const int csidl[2] = { 0x17 /* COMMON_PROGRAMS */, 0x02 /* PROGRAMS */ };
+        int k;
+        for (k = 0; sfp && k < 2; k++) {
+            char l[MAX_PATH + 40];
+            if (!sfp(NULL, l, csidl[k], FALSE)) continue;
+            scat(l, "\\WINVBE\\WINVBE Mouse.lnk", sizeof(l));
+            if (GetFileAttributesA(l) != 0xFFFFFFFF) return;
+        }
+    }
+    if (ntmaj == 3)     /* Program Manager would add a second set of items */
+        progman_exec("[DeleteGroup(WINVBE)]");
+    wsprintfA(c, "[CreateGroup(WINVBE)][ShowGroup(WINVBE,1)][AddItem(%s,WINVBE Display Settings)]"
+                 "[AddItem(%s /MOUSE,WINVBE Mouse,%s,0)]", me, me, me);
+    if (ntmaj == 3) wsprintfA(c + slen(c), "[AddItem(%s /UNINSTALL,Uninstall WINVBE,%s,1)]", me, me);
+    progman_exec(c);
+}
+
+static void nt3_uninstall(void)
+{
+    HKEY k;
+    if (MessageBoxA(NULL, "Remove WINVBE? Windows NT will use its standard VGA display driver again.",
+                    "Uninstall WINVBE", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    if (!RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services\\winvbe", 0, KEY_ALL_ACCESS, &k)) {
+        reg_set_dword(k, "Start", 4);
+        RegCloseKey(k);
+    }
+    if (!RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services\\vga", 0, KEY_ALL_ACCESS, &k)) {
+        reg_set_dword(k, "Start", 1);
+        RegCloseKey(k);
+    }
+    progman_exec("[DeleteGroup(WINVBE)]");
+    if (MessageBoxA(NULL, "WINVBE was removed. Restart Windows NT now?", "Uninstall WINVBE",
+                    MB_YESNO | MB_ICONQUESTION) == IDYES)
+        restart(NULL);
 }
 
 void WINAPI start(void)
@@ -824,14 +1076,348 @@ void WINAPI start(void)
                     "WINVBECF.EXE of the main folder.", "WINVBE", MB_OK | MB_ICONSTOP);
         ExitProcess(1);
     }
+    {
+        const char *c = GetCommandLineA();
+        for (; *c; c++)
+            if ((*c == '/' || *c == '-') && (c[1] | 0x20) == 'm' && (c[2] | 0x20) == 'o') {
+                DialogBoxParamA(hinst, MAKEINTRESOURCEA(IDD_MOUSE), NULL, mouse_proc, 0);
+                ExitProcess(0);
+            } else if ((*c == '/' || *c == '-') && (c[1] | 0x20) == 's' && (c[2] | 0x20) == 'e') {
+                /* RunOnce of the INF runs before the shell is up, and the
+                   shell waits for it: start a copy that waits for the
+                   shell (/SETUPW), and return at once */
+                if (ntmaj >= 4 && !FindWindowA("Shell_TrayWnd", NULL)) {
+                    int i;
+                    if (!((c[6] | 0x20) == 'w')) {
+                        char me[MAX_PATH + 16];
+                        STARTUPINFOA si;
+                        PROCESS_INFORMATION pi;
+                        me[0] = '"';
+                        GetModuleFileNameA(NULL, me + 1, MAX_PATH);
+                        scat(me, "\" /SETUPW", sizeof(me));
+                        memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
+                        if (CreateProcessA(NULL, me, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+                            CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+                        }
+                        ExitProcess(0);
+                    }
+                    for (i = 0; i < 600 && !FindWindowA("Shell_TrayWnd", NULL); i++) Sleep(500);
+                    if (i == 600) ExitProcess(0);
+                    Sleep(5000);
+                }
+                shortcuts_setup();
+                ExitProcess(0);
+            } else if ((*c == '/' || *c == '-') && (c[1] | 0x20) == 'u' && (c[2] | 0x20) == 'n') {
+                if (ntmaj == 3) nt3_uninstall();
+                ExitProcess(0);
+            }
+    }
     GetModuleFileNameA(NULL, exedir, sizeof(exedir));
     for (p = exedir + slen(exedir); p > exedir && p[-1] != '\\'; p--) ;
     *p = 0;
     u = GetModuleHandleA("user32.dll");
-    if (u) pChangeDS = (PCDS)GetProcAddress(u, "ChangeDisplaySettingsA");
+    if (u && ntmaj >= 4) pChangeDS = (PCDS)GetProcAddress(u, "ChangeDisplaySettingsA");
     find_device();
     load_info();
     nt3_setup_sync();
     DialogBoxParamA(hinst, MAKEINTRESOURCEA(IDD_MAIN), NULL, main_proc, 0);
     ExitProcess(0);
+}
+
+/* ---------------- WINVBE Display Features ----------------
+   rotation, scaling of small modes, shadow frame buffer and the colour
+   tables (gamma, brightness, contrast) of WINVBE.DLL: values in the device
+   key, read by the display driver when the display is switched on; on NT
+   4.0 and later WINVBECF switches it off and on again at once */
+
+/* x^e for 0 < x <= 1 without a C runtime */
+static double f_ln(double x)
+{
+    double y, y2, sum = 0, t;
+    int k = 0, i;
+    if (x <= 0) return -1e30;
+    while (x < 0.5) { x *= 2; k--; }
+    while (x >= 1.0) { x /= 2; k++; }
+    y = (x - 1) / (x + 1);              /* ln x = 2 atanh y */
+    y2 = y * y;
+    t = y;
+    for (i = 1; i < 60; i += 2) { sum += t / i; t *= y2; }
+    return 2 * sum + k * 0.6931471805599453;
+}
+
+static double f_exp(double y)
+{
+    double r, t = 1, sum = 1;
+    int n = 0, i;
+    if (y < -700) return 0;
+    while (y < -0.5) { y += 0.6931471805599453; n++; }
+    while (y > 0.5) { y -= 0.6931471805599453; n--; }
+    for (i = 1; i < 30; i++) { t *= y / i; sum += t; }
+    r = sum;
+    while (n > 0) { r /= 2; n--; }
+    while (n < 0) { r *= 2; n++; }
+    return r;
+}
+
+static void make_lut(BYTE *lut, int gamma, int bright, int contr)
+{
+    int i;
+    for (i = 0; i < 256; i++) {
+        double x = i / 255.0, y;
+        y = i ? f_exp(f_ln(x) * 100.0 / gamma) : 0;
+        y = (y - 0.5) * contr / 100.0 + 0.5 + bright / 200.0;
+        if (y < 0) y = 0;
+        if (y > 1) y = 1;
+        lut[i] = (BYTE)(int)(y * 255 + 0.5);
+    }
+}
+
+static int f_rot, f_scale, f_shadow, f_gamma, f_bright, f_contr;
+static int f0_rot, f0_scale, f0_shadow, f0_gamma, f0_bright, f0_contr;
+
+static const char *f_rot_names[4] = { "Normal", "90 degrees clockwise", "180 degrees (upside down)",
+                                      "90 degrees counter-clockwise" };
+static const char *f_scale_names[3] = { "As the BIOS sets them", "Scaled to the native mode (aspect kept)",
+                                        "Scaled to the native mode (full screen)" };
+static const char *f_shadow_names[3] = { "Automatic (real graphics cards)", "On", "Off" };
+
+static void f_combo(HWND d, int id, const char **n, int k, int sel)
+{
+    int i;
+    SendDlgItemMessageA(d, id, CB_RESETCONTENT, 0, 0);
+    for (i = 0; i < k; i++) SendDlgItemMessageA(d, id, CB_ADDSTRING, 0, (LPARAM)n[i]);
+    SendDlgItemMessageA(d, id, CB_SETCURSEL, sel, 0);
+}
+
+static void f_bar(HWND d, int id, int lo, int hi, int v)
+{
+    SetScrollRange(GetDlgItem(d, id), SB_CTL, lo, hi, FALSE);
+    SetScrollPos(GetDlgItem(d, id), SB_CTL, v, TRUE);
+}
+
+static void f_values(HWND d)
+{
+    char b[16];
+    wsprintfA(b, "%d.%02d", f_gamma / 100, f_gamma % 100);
+    SetDlgItemTextA(d, IDC_FGAMMAV, b);
+    wsprintfA(b, "%d", f_bright);
+    SetDlgItemTextA(d, IDC_FBRIGHTV, b);
+    wsprintfA(b, "%d%%", f_contr);
+    SetDlgItemTextA(d, IDC_FCONTRV, b);
+    InvalidateRect(GetDlgItem(d, IDC_FPREVIEW), NULL, FALSE);
+}
+
+static void f_show(HWND d)
+{
+    f_combo(d, IDC_FROT, f_rot_names, 4, f_rot / 90);
+    f_combo(d, IDC_FSCALE, f_scale_names, 3, f_scale);
+    f_combo(d, IDC_FSHADOW, f_shadow_names, 3, f_shadow);
+    f_bar(d, IDC_FGAMMA, 30, 300, f_gamma);
+    f_bar(d, IDC_FBRIGHT, -100, 100, f_bright);
+    f_bar(d, IDC_FCONTR, 20, 300, f_contr);
+    f_values(d);
+}
+
+/* a grey ramp and colour bars through the tables */
+static void f_preview(DRAWITEMSTRUCT *di)
+{
+    BYTE lut[256];
+    RECT r = di->rcItem;
+    int w = r.right - r.left, h = r.bottom - r.top, i;
+    static const BYTE bars[6][3] = { {255,0,0}, {0,255,0}, {0,0,255}, {255,255,0}, {0,255,255}, {255,0,255} };
+    make_lut(lut, f_gamma, f_bright, f_contr);
+    for (i = 0; i < 16; i++) {
+        RECT c;
+        HBRUSH br;
+        BYTE g = lut[i * 17];
+        c.left = r.left + w * i / 16; c.right = r.left + w * (i + 1) / 16;
+        c.top = r.top; c.bottom = r.top + h / 2;
+        br = CreateSolidBrush(RGB(g, g, g));
+        FillRect(di->hDC, &c, br);
+        DeleteObject(br);
+    }
+    for (i = 0; i < 6; i++) {
+        RECT c;
+        HBRUSH br;
+        c.left = r.left + w * i / 6; c.right = r.left + w * (i + 1) / 6;
+        c.top = r.top + h / 2; c.bottom = r.bottom;
+        br = CreateSolidBrush(RGB(lut[bars[i][0]], lut[bars[i][1]], lut[bars[i][2]]));
+        FillRect(di->hDC, &c, br);
+        DeleteObject(br);
+    }
+}
+
+static void f_load(void)
+{
+    HKEY k = open_dev(KEY_READ);
+    DWORD v;
+    f_rot = 0; f_scale = 0; f_shadow = 0; f_gamma = 100; f_bright = 0; f_contr = 100;
+    if (k) {
+        v = reg_dword(k, V_ROTATE, 0); f_rot = (v == 90 || v == 180 || v == 270) ? (int)v : 0;
+        v = reg_dword(k, V_SCALE, 0); f_scale = v <= 2 ? (int)v : 0;
+        v = reg_dword(k, V_SHADOW, 0); f_shadow = v <= 2 ? (int)v : 0;
+        v = reg_dword(k, V_GAMMA, 100); f_gamma = (v >= 30 && v <= 300) ? (int)v : 100;
+        v = reg_dword(k, V_BRIGHT, 1000); f_bright = (v >= 900 && v <= 1100) ? (int)v - 1000 : 0;
+        v = reg_dword(k, V_CONTR, 100); f_contr = (v >= 20 && v <= 300) ? (int)v : 100;
+        RegCloseKey(k);
+    }
+    f0_rot = f_rot; f0_scale = f_scale; f0_shadow = f_shadow;
+    f0_gamma = f_gamma; f0_bright = f_bright; f0_contr = f_contr;
+}
+
+static void status_f(HWND d, const char *s) { SetDlgItemTextA(d, IDC_FNOTE, s); }
+
+/* writes the values; switches the display off and on again (NT 4.0+) */
+static int f_apply(HWND d)
+{
+    HKEY k = open_dev(KEY_READ | KEY_WRITE);
+    BYTE lut[768];
+    int i, ident = 1, odd0 = cur_turned, odd1 = f_rot == 90 || f_rot == 270;
+    if (!k) {
+        MessageBoxA(d, "The settings could not be written (administrator rights are needed).", "WINVBE",
+                    MB_OK | MB_ICONEXCLAMATION);
+        return 0;
+    }
+    reg_set_dword(k, V_ROTATE, (DWORD)f_rot);
+    reg_set_dword(k, V_SCALE, (DWORD)f_scale);
+    reg_set_dword(k, V_SHADOW, (DWORD)f_shadow);
+    reg_set_dword(k, V_GAMMA, (DWORD)f_gamma);
+    reg_set_dword(k, V_BRIGHT, (DWORD)(f_bright + 1000));
+    reg_set_dword(k, V_CONTR, (DWORD)f_contr);
+    make_lut(lut, f_gamma, f_bright, f_contr);
+    for (i = 0; i < 256; i++) if (lut[i] != i) ident = 0;
+    memcpy(lut + 256, lut, 256);
+    memcpy(lut + 512, lut, 256);
+    if (ident) RegDeleteValueA(k, V_LUT);
+    else RegSetValueExA(k, V_LUT, 0, REG_BINARY, lut, 768);
+    if (odd0 != odd1 && ntmaj == 3) {
+        /* NT 3.x: the desktop size Windows asks for at the next start */
+        DWORD x = reg_dword(k, "DefaultSettings.XResolution", 0), y = reg_dword(k, "DefaultSettings.YResolution", 0);
+        if (x && y) {
+            reg_set_dword(k, "DefaultSettings.XResolution", y);
+            reg_set_dword(k, "DefaultSettings.YResolution", x);
+        }
+    }
+    RegCloseKey(k);
+    o_rot = f_rot;
+    if (pChangeDS) {
+        DEVMODEA dm;
+        HDC dc = GetDC(NULL);
+        int w = GetDeviceCaps(dc, HORZRES), h = GetDeviceCaps(dc, VERTRES);
+        int bpp = GetDeviceCaps(dc, BITSPIXEL) * GetDeviceCaps(dc, PLANES), hz = GetDeviceCaps(dc, 116);
+        LONG r;
+        ReleaseDC(NULL, dc);
+        if (odd0 != odd1) { int t = w; w = h; h = t; }
+        memset(&dm, 0, sizeof(dm));
+        dm.dmSize = sizeof(dm);
+        dm.dmSpecVersion = DM_SPECVERSION;
+        dm.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | (hz > 1 ? DM_DISPLAYFREQUENCY : 0);
+        dm.dmPelsWidth = w; dm.dmPelsHeight = h; dm.dmBitsPerPel = bpp; dm.dmDisplayFrequency = hz > 1 ? hz : 0;
+        if (odd0 == odd1) {
+            /* the same mode again would only switch the display off and on
+               (DrvAssertMode); the display driver reads the settings when
+               it is enabled anew: through another colour depth (or refresh
+               rate) of this size and back */
+            DEVMODEA t;
+            DWORD i;
+            int found = 0;
+            memset(&t, 0, sizeof(t));
+            t.dmSize = sizeof(t);
+            for (i = 0; !found && EnumDisplaySettingsA(NULL, i, &t); i++)
+                if ((int)t.dmPelsWidth == w && (int)t.dmPelsHeight == h && (int)t.dmBitsPerPel != bpp &&
+                    t.dmBitsPerPel >= 8) found = 1;
+            for (i = 0; !found && EnumDisplaySettingsA(NULL, i, &t); i++)
+                if ((int)t.dmPelsWidth == w && (int)t.dmPelsHeight == h && (int)t.dmBitsPerPel == bpp &&
+                    (int)t.dmDisplayFrequency != hz) found = 1;
+            if (found) {
+                t.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY;
+                pChangeDS(&t, 0);
+            }
+        }
+        r = pChangeDS(&dm, CDS_UPDATEREGISTRY | 0x40000000 /* CDS_RESET */);
+        if (r == DISP_CHANGE_SUCCESSFUL) cur_turned = odd1;
+        else {
+            char b[80];
+            wsprintfA(b, "The display could not be switched at once (%ld).", r);
+            status_f(d, b);
+            restart(d);
+        }
+    } else
+        restart(d);
+    f0_rot = f_rot; f0_scale = f_scale; f0_shadow = f_shadow;
+    f0_gamma = f_gamma; f0_bright = f_bright; f0_contr = f_contr;
+    return 1;
+}
+
+static void f_scroll(HWND d, HWND bar, int code, int pos)
+{
+    int id = GetDlgCtrlID(bar), *v, lo, hi, step, page;
+    if (id == IDC_FGAMMA) { v = &f_gamma; lo = 30; hi = 300; step = 5; page = 25; }
+    else if (id == IDC_FBRIGHT) { v = &f_bright; lo = -100; hi = 100; step = 1; page = 10; }
+    else if (id == IDC_FCONTR) { v = &f_contr; lo = 20; hi = 300; step = 5; page = 25; }
+    else return;
+    switch (code) {
+    case SB_LINELEFT: *v -= step; break;
+    case SB_LINERIGHT: *v += step; break;
+    case SB_PAGELEFT: *v -= page; break;
+    case SB_PAGERIGHT: *v += page; break;
+    case SB_THUMBTRACK: case SB_THUMBPOSITION: *v = pos; break;
+    case SB_LEFT: *v = lo; break;
+    case SB_RIGHT: *v = hi; break;
+    default: return;
+    }
+    if (*v < lo) *v = lo;
+    if (*v > hi) *v = hi;
+    SetScrollPos(bar, SB_CTL, *v, TRUE);
+    f_values(d);
+}
+
+static INT_PTR CALLBACK features_proc(HWND d, UINT m, WPARAM wp, LPARAM lp)
+{
+    switch (m) {
+    case WM_INITDIALOG:
+        f_load();
+        f_show(d);
+        SetDlgItemTextA(d, IDC_FNOTE, ntmaj >= 4 ?
+            "Rotation, scaling and the colour tables use the shadow buffer; DirectDraw is then off. "
+            "The shadow buffer alone speeds up real cards." :
+            "Windows NT 3.x: the settings take effect after a restart.");
+        return TRUE;
+    case WM_HSCROLL:
+        f_scroll(d, (HWND)lp, LOWORD(wp), (short)HIWORD(wp));
+        return TRUE;
+    case WM_DRAWITEM:
+        if (wp == IDC_FPREVIEW) { f_preview((DRAWITEMSTRUCT *)lp); return TRUE; }
+        break;
+    case WM_COMMAND:
+        switch (LOWORD(wp)) {
+        case IDC_FROT:
+            if (HIWORD(wp) == CBN_SELCHANGE) f_rot = (int)SendDlgItemMessageA(d, IDC_FROT, CB_GETCURSEL, 0, 0) * 90;
+            return TRUE;
+        case IDC_FSCALE:
+            if (HIWORD(wp) == CBN_SELCHANGE) f_scale = (int)SendDlgItemMessageA(d, IDC_FSCALE, CB_GETCURSEL, 0, 0);
+            return TRUE;
+        case IDC_FSHADOW:
+            if (HIWORD(wp) == CBN_SELCHANGE) f_shadow = (int)SendDlgItemMessageA(d, IDC_FSHADOW, CB_GETCURSEL, 0, 0);
+            return TRUE;
+        case IDC_FDEFAULT:
+            f_rot = 0; f_scale = 0; f_shadow = 0; f_gamma = 100; f_bright = 0; f_contr = 100;
+            f_show(d);
+            return TRUE;
+        case IDC_FAPPLY:
+            f_apply(d);
+            return TRUE;
+        case IDOK:
+            if (f_rot != f0_rot || f_scale != f0_scale || f_shadow != f0_shadow || f_gamma != f0_gamma ||
+                f_bright != f0_bright || f_contr != f0_contr)
+                f_apply(d);
+            EndDialog(d, 1);
+            return TRUE;
+        case IDCANCEL:
+            EndDialog(d, 0);
+            return TRUE;
+        }
+        break;
+    }
+    return FALSE;
 }

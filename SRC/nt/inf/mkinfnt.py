@@ -7,7 +7,26 @@ def inf(arch):
     x64 = arch == 'amd64'
     dec = ',NTamd64' if x64 else ''
     mfg = 'WINVBE.Mfg' + ('.NTamd64' if x64 else '')
-    return f"""; WINVBE v1.1 - universal VESA/VGA/SVGA display driver
+    # the OpenGL ICD: OPENGL32.DLL finds it through DrvEscape(OPENGL_GETINFO)
+    # = "WINVBE" and OpenGLDrivers\WINVBE.  x64: the 64-bit DLL in system32
+    # with the native registry, and the 32-bit one (WVBGL32W.DLL on the disk,
+    # with its x87 and SSE2 renderers WVBGLX/WVBGLS)
+    # in SysWOW64 (16425) with the 32-bit registry (Wow6432Node)
+    def glreg(root):
+        k = f'HKLM,"{root}\\Windows NT\\CurrentVersion\\OpenGLDrivers'
+        return (f'{k}\\WINVBE",Dll,,wvbgl32\n'
+                f'{k}\\WINVBE",DriverVersion,%REG_DWORD%,1\n'
+                f'{k}\\WINVBE",Flags,%REG_DWORD%,1\n'
+                f'{k}\\WINVBE",Version,%REG_DWORD%,2\n'
+                f'{k}",WINVBE,,wvbgl32.dll\n')
+    glregs = glreg('Software\\Microsoft') + (glreg('Software\\Wow6432Node\\Microsoft') if x64 else '')
+    glwow = '\nwinvbe.OpenGL32  = 16425' if x64 else ''
+    glwowf = '\nwvbgl32w.dll = 1' if x64 else ''
+    glwowf += '\nwvbglx.dll   = 1\nwvbgls.dll   = 1'
+    glwowc = ', winvbe.OpenGL32' if x64 else ''
+    glwows = ('\n\n[winvbe.OpenGL32]\nwvbgl32.dll,wvbgl32w.dll\nwvbglx.dll\nwvbgls.dll' if x64 else
+              '\nwvbglx.dll\nwvbgls.dll')
+    return f"""; WINVBE v1.2 - universal VESA/VGA/SVGA display driver
 ; {'Windows XP x64 / Server 2003 x64' if x64 else 'Windows NT 4.0, 2000, XP and Server 2003 (x86)'}
 ;
 ; Windows 2000/XP/2003: Device Manager > Display adapters > (adapter) >
@@ -21,13 +40,14 @@ Signature="$CHICAGO$"
 Provider=%WVB%
 ClassGUID={{4D36E968-E325-11CE-BFC1-08002BE10318}}
 Class=Display
-DriverVer=10/19/2026,1.1.0.0
+DriverVer=11/02/2026,1.2.0.0
 
 [DestinationDirs]
 DefaultDestDir   = 11
 winvbe.Miniport  = 12
 winvbe.Display   = 11
 winvbe.Tools     = 11
+winvbe.OpenGL    = 11{glwow}
 
 [SourceDisksNames]
 1 = %Disk%,,,
@@ -36,6 +56,7 @@ winvbe.Tools     = 11
 winvbe.sys   = 1
 winvbe.dll   = 1
 winvbecf.exe = 1
+wvbgl32.dll  = 1{glwowf}
 
 [Manufacturer]
 %WVB% = WINVBE.Mfg{dec}
@@ -45,7 +66,16 @@ winvbecf.exe = 1
 %WVB.Desc% = winvbe, PCI\\CC_0001
 
 [winvbe]
-CopyFiles = winvbe.Miniport, winvbe.Display, winvbe.Tools
+CopyFiles = winvbe.Miniport, winvbe.Display, winvbe.Tools, winvbe.OpenGL{glwowc}
+AddReg = winvbe.Shortcuts, winvbe.OpenGLReg
+
+; OpenGL in software (Mesa) as the ICD of the display: the key (2000 and
+; later) and the value (NT 4.0)
+[winvbe.OpenGLReg]
+{glregs}
+; at the next logon: the Start menu folder WINVBE (Display Settings, Mouse)
+[winvbe.Shortcuts]
+HKLM,"Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce",WINVBESETUP,,"%11%\\winvbecf.exe /SETUP"
 
 [winvbe.Miniport]
 winvbe.sys
@@ -55,6 +85,9 @@ winvbe.dll
 
 [winvbe.Tools]
 winvbecf.exe
+
+[winvbe.OpenGL]
+wvbgl32.dll{glwows}
 
 [winvbe.SoftwareSettings]
 AddReg = winvbe_SoftwareDeviceSettings
@@ -90,7 +123,7 @@ HKR,,TypesSupported,0x00010001,7
 [Strings]
 WVB          = "WINVBE"
 WVB.Desc     = "WINVBE Universal VESA/VGA/SVGA"
-Disk         = "WINVBE v1.1 for Windows NT"
+Disk         = "WINVBE v1.2 for Windows NT"
 REG_SZ       = 0x00000000
 REG_MULTI_SZ = 0x00010000
 REG_DWORD    = 0x00010001
@@ -115,10 +148,14 @@ def oemsetup():
     # padded so that Setup's sorted list is in order of size and depth
     txt = ''.join('    "WINVBE %ux%ux%u"%s= "WINVBE VESA %4u x %4u, %2u bit (%s)"\n' %
                   (w, h, b, ' ' * (16 - len('%ux%ux%u' % (w, h, b))), w, h, b, COLORS[b]) for w, h, b in NT3_MODES)
-    return r"""; WINVBE v1.1 - universal VESA display driver for Windows NT 3.1, 3.5, 3.51
+    return r"""; WINVBE v1.2 - universal VESA display driver for Windows NT 3.1, 3.5, 3.51
 ;
 ; Windows NT Setup (Main group) > Options > Change System Settings >
 ;   Display > Other > path of this folder (e.g. A:\ or C:\WINVBE\NT\I386\NT3X).
+; Windows NT 3.5x: Control Panel > Display > Change Display Type > Change >
+;   Other > this folder.
+; Also installs the OpenGL ICD (WVBGL32.DLL, WVBGLX.DLL, WVBGLS.DLL) for
+; NT 3.5 and 3.51; GL11\OPENGL32.DLL is OpenGL 1.1 for programs (next to them).
 ; The resolution can be changed later with WINVBECF.EXE (in SYSTEM32).
 ; WINVBE.SYS and WINVBE.DLL of this folder are the Windows NT 3.x ones.
 ;
@@ -288,6 +325,20 @@ finish_ReturnOptions = +
                 endif
             endif
         endif
+        ; the OpenGL ICD (NT 3.5 and 3.51: OPENGL32.DLL looks for the value
+        ; WINVBE under OpenGLDrivers; NT 3.1 has no OpenGL and ignores it)
+        OpenRegKey $(!REG_H_LOCAL) "" "SOFTWARE\Microsoft\Windows NT\CurrentVersion" 33554432 GLParent
+        ifstr(i) $(GLParent) != ""
+            OpenRegKey $(GLParent) "" "OpenGLDrivers" 33554432 GLKey
+            ifstr(i) $(GLKey) == ""
+                CreateRegKey $(GLParent) {"OpenGLDrivers", 0, GenericClass} "" 33554432 "" GLKey
+            endif
+            ifstr(i) $(GLKey) != ""
+                SetRegValue $(GLKey) {WINVBE, 0, $(!REG_VT_SZ), "wvbgl32.dll"}
+                CloseRegKey $(GLKey)
+            endif
+            CloseRegKey $(GLParent)
+        endif
         goto configdone
 errorconfig = +
         goto finish_InstallOption
@@ -314,7 +365,7 @@ finish_InstallOption = +
     exit
 
 [Source Media Descriptions]
-    1 = "WINVBE v1.1 for Windows NT 3.x", TAGFILE = winvbe.sys
+    1 = "WINVBE v1.2 for Windows NT 3.x", TAGFILE = winvbe.sys
 
 [ProductType]
 STF_PRODUCT  = Winnt
@@ -328,6 +379,9 @@ winvbe = 1,WINVBE.SYS
 
 [Files-Tools]
 winvbecf = 1,WINVBECF.EXE
+wvbgl32  = 1,WVBGL32.DLL
+wvbglx   = 1,WVBGLX.DLL
+wvbgls   = 1,WVBGLS.DLL
 
 [LanguagesSupported]
     ENG

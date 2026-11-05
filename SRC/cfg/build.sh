@@ -4,6 +4,7 @@ cd "$(dirname "$0")"
 . ../owenv.sh
 mkdir -p obj
 cp ../res/winvbecf.ico . 2>/dev/null || true
+python3 ../tools/mkuninst.py winvbecf.ico winvbeun.ico
 wcc -q -ml -zW -bt=windows -2 -ox -wx -wcd=303 -fo=obj/vbeq.obj vbeq.c
 wcc -q -ml -zW -bt=windows -2 -ox -wx -wcd=303 -fo=obj/winvbecf.obj winvbecf.c
 wcc -q -ml -zW -bt=windows -3 -ox -wx -wcd=303 -fo=obj/i915core.obj ../patch/i915core.c

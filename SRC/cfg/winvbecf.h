@@ -1,6 +1,9 @@
 #define IDD_MAIN        100
 #define IDD_ABOUT       101
+#define IDD_MOUSE       102
+#define IDD_COLOR       103
 #define IDI_APP         1
+#define IDI_UNINST      2
 
 #define IDC_INFO        200
 #define IDC_MODES       201
@@ -20,3 +23,22 @@
 #define IDC_CUSTOM      215
 #define IDC_ENABLE      216
 #define IDC_DETAILS     217
+#define IDC_MOUSE       218
+#define IDC_MSPEED      230
+#define IDC_MDBL        231
+#define IDC_MCOLOR      232
+#define IDC_MSWAP       233
+#define IDC_MLARGE      234
+#define IDC_MNOTE       235
+#define IDC_COLORS      219
+#define IDC_CGAMMA      240
+#define IDC_CGAMMAV     241
+#define IDC_CBRIGHT     242
+#define IDC_CBRIGHTV    243
+#define IDC_CCONTR      244
+#define IDC_CCONTRV     245
+#define IDC_CPREVIEW    246
+#define IDC_CDEFAULT    247
+#define IDC_CNOTE       248
+#define IDC_CROTATE     249
+#define IDC_CSCALE      250

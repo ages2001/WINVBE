@@ -75,15 +75,40 @@ typedef struct {
 } GBITMAP;
 typedef GBITMAP FAR *LPGBITMAP;
 
-/* our screen PDEVICE - starts like a GBITMAP */
+/* our screen PDEVICE - starts like a GBITMAP (in DIB engine mode GDI
+   allocates the size DIBENG asks for and it is a DIBENGINE, dibeng.c) */
 typedef struct {
     GBITMAP bm;
-    WORD    magic;          /* 'VW' */
-    WORD    pad;
 } PDEVICE;
 typedef PDEVICE FAR *LPPDEVICE;
 #define PDEV_TYPE   0x2000
-#define PDEV_MAGIC  0x5756
+typedef struct {
+    WORD   deType;
+    WORD   deWidth;
+    WORD   deHeight;
+    WORD   deWidthBytes;
+    BYTE   dePlanes;
+    BYTE   deBitsPixel;
+    DWORD  deReserved1;
+    DWORD  deDeltaScan;
+    LPVOID delpPDevice;
+    DWORD  deBitsOffset;
+    WORD   deBitsSelector;
+    WORD   deFlags;
+    WORD   deVersion;
+    LPVOID deBitmapInfo;
+    LPVOID deBeginAccess;
+    LPVOID deEndAccess;
+    DWORD  deDriverReserved;
+} DIBENGINE;
+typedef DIBENGINE FAR *LPDIBENGINE;
+/* DIBENGINE deFlags */
+#define DE_MINIDRIVER      0x0001
+#define DE_PALETTIZED      0x0002
+#define DE_BUSY            0x0010
+#define DE_NOT_FRAMEBUFFER 0x0020
+#define DE_FIVE6FIVE       0x0040
+#define DE_VRAM            0x8000
 
 typedef struct {
     SHORT Rop2;
@@ -242,6 +267,51 @@ typedef struct {
     SHORT dpPalResolution;
 } GDIINFO;
 typedef GDIINFO FAR *LPGDIINFO;
+
+/* DIB engine mode (dibeng.c): DIBENG.DLL entry points in dibe_tab - the
+   indices are those of entry.asm */
+#define DT_ENUMOBJ      3
+#define DT_REALIZEOBJ   6
+#define DT_DIBBLT       15
+#define DT_GETPAL       18
+#define DT_SETPALXLAT   19
+#define DT_GETPALXLAT   20
+#define DT_UPDATECOLORS 21
+#define DT_ENABLE       30
+#define DT_CONTROL      31
+#define DT_SETPALETTE   32
+#define DT_BEGINACCESS  33
+#define DT_ENDACCESS    34
+#define DT_COUNT        35
+extern LPPDEVICE scr_pdev;
+void cursor_options(WORD color, WORD size);
+#pragma aux scr_pdev "*"
+#ifdef OLDWIN
+#define dibeng_on 0
+#define dibeng_check() 0
+#define win30_icon_fix() ((void)0)
+#define pdev_sync() ((void)0)
+#define dibeng_begin(l, t, r, b) ((void)0)
+#define dibeng_end() ((void)0)
+#else
+extern BYTE dibeng_on;
+#pragma aux dibeng_on "*"
+extern DWORD dibe_tab[];
+#pragma aux dibe_tab "*"
+int   dibeng_check(void);
+void  win30_icon_fix(void);
+void  dibeng_gdiinfo(LPGDIINFO gi);
+void  pdev_sync(void);
+WORD  dibeng_enable(LPVOID lpDevice, LPSTR devtype, LPSTR outfile, LPVOID data);
+WORD  dibeng_setpalette(WORD start, WORD count, LPBYTE pal);
+SHORT dibeng_control(LPVOID lpDev, WORD func, LPVOID lpIn, LPVOID lpOut);
+void  dibeng_begin(SHORT l, SHORT t, SHORT r, SHORT b);
+void  dibeng_end(void);
+void  dibeng_reenable(LPVOID lpDevice);
+void  dibeng_setcursor(LPCURSORSHAPE cs);
+void  dibeng_cursor_again(void);
+#endif
+
 
 /* physical pen */
 typedef struct {
@@ -441,8 +511,8 @@ typedef struct {
     /* settings read once at start: mode sets also run in contexts where
        KERNEL (profile/registry) may not be called, e.g. after a resume */
     BYTE  ini_timing;           /* Timing: 0 CVT, 1 reduced blanking, 2 auto */
-    BYTE  ini_vgareserve, ini_dac8, ini_repost, ini_vmaccel, ini_vmfifo;
-    BYTE  ini_shadow, ini_wc;
+    BYTE  ini_vgareserve, ini_dac8, ini_repost, ini_vmaccel, ini_vmfifo, ini_hwcursor;
+    BYTE  ini_shadow, ini_wc, ini_dibeng;
 
     /* shadow frame buffer: a copy of the screen in system memory. Reading
        video memory over PCI/AGP/PCIe is very slow (uncached, one bus round
@@ -452,6 +522,16 @@ typedef struct {
     BYTE  wc;                   /* frame buffer write combining: 1 PAT, 2 MTRR, 3 was on */
     WORD  shsel, shtiles;       /* tile selectors, 64 KB each (increment lfbinc) */
     DWORD shlin, shsize, shhandle;
+
+    /* turned or scaled desktop (Rotate, Scale): GDI draws on lw x lh (in the
+       shadow, rows of spitch bytes), surf.c puts it on the xres x yres mode;
+       without either lw/lh/spitch are xres/yres/pitch */
+    BYTE  ini_rotate, ini_scale;
+    BYTE  ini_opengl;           /* OpenGL=1: OPENGL_GETINFO names the ICD (WVBGL32.DLL) */
+    BYTE  xf;                   /* 0 none, 1 turned, 2 scaled */
+    BYTE  rot;                  /* 1 90, 2 180, 3 270 degrees (clockwise) */
+    WORD  lw, lh, spitch;
+    WORD  sdx, sdy, sdw, sdh;   /* scaled: where the desktop is shown */
 } DRVSTATE;
 
 extern DRVSTATE g;
@@ -529,6 +609,11 @@ typedef struct {
 } RMREGS;
 extern RMREGS rmr;
 int  int10(RMREGS *r);
+WORD vbe_mode_ok(WORD w, WORD h, WORD bpp);
+/* ddhal.c (Windows 9x DirectDraw HAL) */
+int dd_possible(void);
+int vbe_dispi_flip(void);
+void dd_mode_changed(void);
 LPBYTE rm_ptr(WORD seg, WORD off);
 int  vbe_probe(void);
 int  vbe_select_mode(void);
@@ -547,6 +632,12 @@ int  svga_fill(DWORD color, SHORT x, SHORT y, SHORT w, SHORT h);
 void svga_off(void);
 int  svga_repair(void);
 void svga_reverify(void);
+int  svga_cursor_possible(void);
+int  svga_cursor_defined(void);
+int  svga_cursor_inverts(void);
+typedef int (*SVGA_CURPX)(WORD x, WORD y, DWORD *xorv);
+int  svga_cursor_define(WORD hx, WORD hy, WORD w, WORD h, SVGA_CURPX px);
+void svga_cursor_move(SHORT x, SHORT y, BYTE on);
 void win9x_check_screen(void);
 void vbe_dispi_snapshot(void);
 int vbe_dispi_repair(void);
@@ -580,7 +671,15 @@ void scr_read(WORD y, WORD x, WORD n, BYTE *buf);
 void scr_write(WORD y, WORD x, WORD n, const BYTE *buf);
 void scr_fill(WORD y, WORD x, WORD n, DWORD pix);
 void vram_write(WORD y, WORD x, WORD n, const BYTE *buf);   /* not the shadow (cursor) */
-void shadow_flush(WORD l, WORD t, WORD r, WORD b);           /* shadow -> video memory */
+void shadow_flush(WORD l, WORD t, WORD r, WORD b);
+void vram_clear(void);                                       /* the whole mode, black */           /* shadow -> video memory */
+/* colour correction (surf.c) */
+extern BYTE lut_on, lut_hc, lutc[3][256];
+void lut_build(WORD gamma, SHORT bright, WORD contr);
+void lut_update(void);
+void lut_ramp(const WORD __far *r);
+void lut_get_ramp(WORD __far *r);
+DWORD lut_px(DWORD p);
 int  shadow_alloc(DWORD size);
 void shadow_free(void);
 WORD vxd_wc(DWORD lin, DWORD size, DWORD phys);

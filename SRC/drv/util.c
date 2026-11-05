@@ -123,10 +123,11 @@ WORD get_ini_int(const char *key, WORD def)
 {
     char buf[16];
     char *p = buf;
-    WORD v = 0, base = 10;
+    WORD v = 0, base = 10, neg = 0;
     get_ini_str(key, "", buf, sizeof(buf));
     if (!buf[0])
         return def;
+    if (p[0] == '-') { neg = 1; p++; }      /* negative (Brightness): two's complement */
     if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X')) { base = 16; p += 2; }
     for (; *p; p++) {
         char c = *p;
@@ -149,7 +150,7 @@ WORD get_ini_int(const char *key, WORD def)
         else break;
         v = v * base + d;
     }
-    return v;
+    return neg ? (WORD)-(SHORT)v : v;
 }
 
 void get_ini_str(const char *key, const char *def, char *buf, WORD n)

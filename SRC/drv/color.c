@@ -47,7 +47,12 @@ DWORD pix_of(DWORD phys)
         BYTE b = (BYTE)(((lo & 0x1F) << 3) | (hi >> 5));
         return ((DWORD)r << g.mi.rpos) | ((DWORD)gg << g.mi.gpos) | ((DWORD)b << g.mi.bpos);
     }
-    return phys & PIXMASK;
+    /* GDI keeps only the low word of a physical color it got from
+       ColorInfo and fills the high word itself (Windows 9x puts the blue
+       byte of the logical color in bits 16..23: teal 0x808000 arrives as
+       FF800006), so only the bits of the pixel size count */
+    if (g.pf == PF_8) return phys & 0xFFUL;
+    return phys & 0xFFFFUL;
 }
 
 /* raw pixel -> logical RGB */
@@ -78,6 +83,17 @@ DWORD word_to_phys(WORD w)
         BYTE r = (BYTE)((w >> 11) << 3), gg = (BYTE)(((w >> 5) & 0x3F) << 2), b = (BYTE)((w & 0x1F) << 3);
         r |= r >> 5; gg |= gg >> 6; b |= b >> 5;
         return rgb_to_phys((DWORD)r | ((DWORD)gg << 8) | ((DWORD)b << 16));
+    }
+    if (g.pf == PF_8) {
+        /* a palette index: that entry itself - matching its colour again
+           (pixel_to_phys) found only the 20 static colours, so programs
+           with a palette of their own (Winamp in 256 colours) were drawn
+           in the static colours */
+        BYTE i = (BYTE)w;
+        DWORD p = i;
+        if (rgb_is_white(MAKELONG(g.pal[i * 4] | (g.pal[i * 4 + 1] << 8), g.pal[i * 4 + 2])))
+            p |= PHYS_MONO;
+        return p;
     }
     return pixel_to_phys(w);
 }
@@ -187,7 +203,12 @@ DWORD rgb_to_phys(DWORD rgb)
     if ((hi == 0xFF || hi == 0x01) && g.palettized) {
         /* palette index (already translated by GDI for 0xFF) */
         WORD idx = (WORD)rgb & 0xFF;
-        if (hi == 0x01) idx = g.xlat[idx] & 0xFF;
+        if (hi == 0x01) {
+#ifdef XLATDBG
+            if (g.xlat[idx] != idx) DBG("PALETTEINDEX %lx -> %u\n", rgb, g.xlat[idx]);
+#endif
+            idx = g.xlat[idx] & 0xFF;
+        }
         p = idx;
         if (rgb_is_white(MAKELONG(g.pal[idx * 4] | (g.pal[idx * 4 + 1] << 8), g.pal[idx * 4 + 2])))
             p |= PHYS_MONO;

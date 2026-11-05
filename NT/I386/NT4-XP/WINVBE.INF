@@ -1,4 +1,4 @@
-; WINVBE v1.1 - universal VESA/VGA/SVGA display driver
+; WINVBE v1.2 - universal VESA/VGA/SVGA display driver
 ; Windows NT 4.0, 2000, XP and Server 2003 (x86)
 ;
 ; Windows 2000/XP/2003: Device Manager > Display adapters > (adapter) >
@@ -12,13 +12,14 @@ Signature="$CHICAGO$"
 Provider=%WVB%
 ClassGUID={4D36E968-E325-11CE-BFC1-08002BE10318}
 Class=Display
-DriverVer=10/19/2026,1.1.0.0
+DriverVer=11/02/2026,1.2.0.0
 
 [DestinationDirs]
 DefaultDestDir   = 11
 winvbe.Miniport  = 12
 winvbe.Display   = 11
 winvbe.Tools     = 11
+winvbe.OpenGL    = 11
 
 [SourceDisksNames]
 1 = %Disk%,,,
@@ -27,6 +28,9 @@ winvbe.Tools     = 11
 winvbe.sys   = 1
 winvbe.dll   = 1
 winvbecf.exe = 1
+wvbgl32.dll  = 1
+wvbglx.dll   = 1
+wvbgls.dll   = 1
 
 [Manufacturer]
 %WVB% = WINVBE.Mfg
@@ -36,7 +40,21 @@ winvbecf.exe = 1
 %WVB.Desc% = winvbe, PCI\CC_0001
 
 [winvbe]
-CopyFiles = winvbe.Miniport, winvbe.Display, winvbe.Tools
+CopyFiles = winvbe.Miniport, winvbe.Display, winvbe.Tools, winvbe.OpenGL
+AddReg = winvbe.Shortcuts, winvbe.OpenGLReg
+
+; OpenGL in software (Mesa) as the ICD of the display: the key (2000 and
+; later) and the value (NT 4.0)
+[winvbe.OpenGLReg]
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\WINVBE",Dll,,wvbgl32
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\WINVBE",DriverVersion,%REG_DWORD%,1
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\WINVBE",Flags,%REG_DWORD%,1
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\WINVBE",Version,%REG_DWORD%,2
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers",WINVBE,,wvbgl32.dll
+
+; at the next logon: the Start menu folder WINVBE (Display Settings, Mouse)
+[winvbe.Shortcuts]
+HKLM,"Software\Microsoft\Windows\CurrentVersion\RunOnce",WINVBESETUP,,"%11%\winvbecf.exe /SETUP"
 
 [winvbe.Miniport]
 winvbe.sys
@@ -46,6 +64,11 @@ winvbe.dll
 
 [winvbe.Tools]
 winvbecf.exe
+
+[winvbe.OpenGL]
+wvbgl32.dll
+wvbglx.dll
+wvbgls.dll
 
 [winvbe.SoftwareSettings]
 AddReg = winvbe_SoftwareDeviceSettings
@@ -81,7 +104,7 @@ HKR,,TypesSupported,0x00010001,7
 [Strings]
 WVB          = "WINVBE"
 WVB.Desc     = "WINVBE Universal VESA/VGA/SVGA"
-Disk         = "WINVBE v1.1 for Windows NT"
+Disk         = "WINVBE v1.2 for Windows NT"
 REG_SZ       = 0x00000000
 REG_MULTI_SZ = 0x00010000
 REG_DWORD    = 0x00010001

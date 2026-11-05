@@ -196,6 +196,14 @@ WORD EXPORT BitBlt(LPVOID lpDst, SHORT dx, SHORT dy, LPVOID lpSrc, SHORT sx, SHO
                    br ? br->style : 0xFFFF, br ? br->flags : 0, br ? br->fg : 0UL);
     if (g.debug > 1 && dm)
         dbg_printf("   dm text=%lx bk=%lx bkmode=%u\n", dm->TextColor, dm->bkColor, dm->bkMode);
+#ifdef BLTDBG
+    if (g.debug == 1)
+        dbg_printf("BB %x<%x d=%u/%u (%d,%d) s=%u/%u (%d,%d) %dx%d rop=%lx br=%x fg=%lx dm=%lx/%lx\n",
+                   d.screen ? 0 : FP_SEG(((LPGBITMAP)lpDst)->bmBits), (needS && !((LPGBITMAP)lpSrc)->bmType) ? FP_SEG(((LPGBITMAP)lpSrc)->bmBits) : 0,
+                   d.screen, d.Bpp, dx, dy,
+                   needS ? (((LPGBITMAP)lpSrc)->bmType ? 1 : 0) : 9, needS ? ((LPGBITMAP)lpSrc)->bmBitsPixel * 10 + ((LPGBITMAP)lpSrc)->bmPlanes : 0, sx, sy, w, h, rop,
+                   br ? br->style : 0xFFFF, br ? br->fg : 0UL, dm ? dm->TextColor : 0UL, dm ? dm->bkColor : 0UL);
+#endif
     if (needS) {
         if (!lpSrc) return 0;
         surf_from_dev(&s, lpSrc);
@@ -212,6 +220,24 @@ WORD EXPORT BitBlt(LPVOID lpDst, SHORT dx, SHORT dy, LPVOID lpSrc, SHORT sx, SHO
         if (sy + h > (SHORT)s.height) h = s.height - sy;
     }
     if (w <= 0 || h <= 0) return 1;
+#ifdef BLTDBG
+    if (g.debug == 1 && needS && !s.screen && s.Bpp == 4 && !s.mono && w == 32 && h == 32) {
+        WORD k;
+        row_read(&s, sy + 16, sx, 32, bufS);
+        dbg_printf("  row16:");
+        for (k = 0; k < 32; k++) dbg_printf(" %lx", ((LPDWORD)bufS)[k]);
+        dbg_printf("\n");
+    }
+    if (g.debug == 1 && needS && !s.screen && s.Bpp == 1 && !s.mono && w == 16 && h == 16) {
+        WORD k, q;
+        for (q = 0; q < 16; q += 5) {
+            row_read(&s, sy + q, sx, 16, bufS);
+            dbg_printf("  row%u:", q);
+            for (k = 0; k < 16; k++) dbg_printf(" %02x", bufS[k]);
+            dbg_printf("\n");
+        }
+    }
+#endif
 
     el = dx; et = dy; er = dx + w; eb = dy + h;
     if (needS && s.screen) {
@@ -318,6 +344,13 @@ WORD EXPORT StretchBlt(LPVOID lpDst, SHORT dx, SHORT dy, SHORT dw, SHORT dh, LPV
         if (s.screen && ((LPGBITMAP)lpDst)->bmType) return (WORD)-1;   /* overlapping screen stretch */
     }
     surf_from_dev(&d, lpDst);
+#ifdef BLTDBG
+    if (g.debug == 1)
+        dbg_printf("SB %x<%x d=%u/%u (%d,%d %dx%d) s=%u (%d,%d %dx%d) rop=%lx fg=%lx dm=%lx/%lx\n",
+                   d.screen ? 0 : FP_SEG(((LPGBITMAP)lpDst)->bmBits), (needS && !s.screen) ? FP_SEG(((LPGBITMAP)lpSrc)->bmBits) : 0, d.screen, d.Bpp, dx, dy, dw, dh,
+                   needS ? ((LPGBITMAP)lpSrc)->bmBitsPixel : 0, sx, sy, sw, sh, rop, br ? br->fg : 0UL,
+                   dm ? dm->TextColor : 0UL, dm ? dm->bkColor : 0UL);
+#endif
     cl = dx; ct = dy; cr = dx + dw; cb = dy + dh;
     if (clip) {
         if (clip->left > cl) cl = clip->left;

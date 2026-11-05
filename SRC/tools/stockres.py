@@ -21,7 +21,7 @@ exactly like the stock VGA driver of each Windows version.
 If <stock> does not exist, the WINVBE artwork from <res dir> (mkres.py) is
 used instead: w3/nt3 copy it, old leaves <out dir> as it is.  The stock
 drivers are Microsoft files and are not part of the source tree; put them
-into msfiles/stock (see README.TXT, "Building").
+into msfiles/stock (see README.md, "Building from source").
 """
 import glob
 import os

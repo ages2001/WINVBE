@@ -1,0 +1,22 @@
+; wvbgl32.def - exports of WVBGL32.DLL, the WINVBE OpenGL ICD.
+; Undecorated names, __stdcall entry points (as opengl32.dll expects).
+LIBRARY WVBGL32.DLL
+EXPORTS
+    DrvCopyContext = DrvCopyContext@12
+    DrvCreateContext = DrvCreateContext@4
+    DrvCreateLayerContext = DrvCreateLayerContext@8
+    DrvDeleteContext = DrvDeleteContext@4
+    DrvDescribeLayerPlane = DrvDescribeLayerPlane@20
+    DrvDescribePixelFormat = DrvDescribePixelFormat@16
+    DrvGetLayerPaletteEntries = DrvGetLayerPaletteEntries@20
+    DrvGetProcAddress = DrvGetProcAddress@4
+    DrvRealizeLayerPalette = DrvRealizeLayerPalette@12
+    DrvReleaseContext = DrvReleaseContext@4
+    DrvSetCallbackProcs = DrvSetCallbackProcs@8
+    DrvSetContext = DrvSetContext@12
+    DrvSetLayerPaletteEntries = DrvSetLayerPaletteEntries@20
+    DrvSetPixelFormat = DrvSetPixelFormat@8
+    DrvShareLists = DrvShareLists@8
+    DrvSwapBuffers = DrvSwapBuffers@4
+    DrvSwapLayerBuffers = DrvSwapLayerBuffers@8
+    DrvValidateVersion = DrvValidateVersion@4

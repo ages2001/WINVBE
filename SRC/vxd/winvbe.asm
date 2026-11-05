@@ -104,7 +104,7 @@ WVBN_FOREGROUND equ 4               ; Windows has the screen back
 ddb:    dd 0                    ; DDB_Next
         dw 0300h                ; DDB_SDK_Version (Windows 3.0)
         dw 0                    ; DDB_Req_Device_Number: undefined
-        db 1, 1                 ; version 1.1
+        db 1, 2                 ; version 1.2
         dw 0                    ; DDB_Flags
         db 'WINVBE  '           ; DDB_Name
         dd 27FFFFFFh            ; DDB_Init_Order: just before the VDD (28000000h)
@@ -452,13 +452,38 @@ int10_hook:
         pop     eax
 .ms:
 %endif
-        cmp     ebx, [focus_vm]
-        je      .pass
         cmp     byte [present], 0
         jne     .pass
-        mov     ax, [ebp + 1Ch]
+        cmp     ebx, [sysvm]
+        je      .pass
+%ifdef DEBUGE9
+        push    eax
+        mov     al, '['
+        out     0E9h, al
+        mov     al, [ebp + 1Dh]
+        call    hexb
+        mov     al, [ebp + 1Ch]
+        call    hexb
+        mov     al, ']'
+        out     0E9h, al
+        pop     eax
+%endif
+        cmp     ebx, [focus_vm]
+        jne     .bg
+        ; the focus VM: the VDD gives windowed MS-DOS boxes the focus too -
+        ; with the card still in graphics mode (the Windows desktop on the
+        ; screen) a text mode set comes from a window
+        cmp     byte [ebp + 1Dh], 0             ; AH = 0: set mode
+        jne     .pass
+        call    phys_graphics
+        jnc     .pass
+.bg:    mov     ax, [ebp + 1Ch]
         test    ah, ah                          ; set mode
-        jz      .mode
+        jnz     .nm
+        call    text_emul                       ; text mode again: no BIOS
+        jnc     .done
+        jmp     .mode
+.nm:
         cmp     ax, 4F02h                       ; VBE set mode
         je      .mode
         cmp     ax, 4F04h                       ; VBE state save/restore
@@ -477,6 +502,119 @@ int10_hook:
         popad
 .pass:  stc
         ret
+.done:  clc
+        ret
+
+; -> CF set when the card is in a graphics mode (GR6 bit 0 of the real
+; graphics controller; its index register is kept)
+phys_graphics:
+        push    eax
+        push    edx
+        mov     dx, 3CEh
+        in      al, dx
+        mov     ah, al
+        mov     al, 6
+        out     dx, al
+        inc     dx
+        in      al, dx
+        dec     dx
+        xchg    al, ah
+        out     dx, al
+        test    ah, 1
+        pop     edx
+        pop     eax
+        jz      .text
+        stc
+        ret
+.text:  clc
+        ret
+
+; A VM in the background (a windowed MS-DOS box) sets a text mode while it
+; is in that kind of text mode already - COMMAND.COM and most programs do
+; that at their start. The video BIOSes of current cards program the card
+; itself for it, past the VDD: the Windows screen went black until the
+; display driver had set its mode again. Done here without the mode set:
+; BIOS data of the mode, the screen cleared (BIOS scroll) and the cursor
+; home (BIOS) - the VDD's virtual registers already hold that mode.
+; -> CF clear when done (the INT is consumed)
+text_emul:
+        pushad
+        movzx   ecx, byte [ebp + 1Ch]           ; AL: mode, bit 7 = no clear
+        mov     eax, ecx
+        and     al, 7Fh
+        cmp     al, 3
+        ja      .no
+        mov     esi, [ebx + 4]                  ; CB_High_Linear
+        add     esi, 400h                       ; BIOS data area
+        mov     dl, [esi + 49h]
+        cmp     dl, 3
+        ja      .no                             ; graphics now: the real BIOS
+        mov     ah, al
+        shr     ah, 1
+        mov     dh, dl
+        shr     dh, 1
+        cmp     ah, dh                          ; same width (40 / 80)
+        jne     .no
+        cmp     byte [esi + 62h], 0             ; page 0
+        jne     .no
+        cmp     byte [esi + 84h], 24            ; 25 rows
+        jne     .no
+        cmp     word [esi + 85h], 16            ; 8x16 font
+        jne     .no
+        mov     [esi + 49h], al
+        movzx   edx, ah
+        mov     dx, [cols_tab + edx * 2]
+        mov     [esi + 4Ah], dx                 ; columns
+        shl     edx, 1
+        imul    edx, edx, 25
+        add     edx, 0FFh
+        xor     dl, dl
+        mov     [esi + 4Ch], dx                 ; page size
+        mov     word [esi + 4Eh], 0             ; page start
+        lea     edi, [esi + 50h]                ; cursor positions
+        push    ecx
+        xor     eax, eax
+        mov     ecx, 4
+        rep     stosd
+        pop     ecx
+        mov     edi, client_save2
+        VMMcall Save_Client_State
+        VMMcall Begin_Nest_V86_Exec
+        test    cl, 80h
+        jnz     .nc
+        movzx   eax, word [esi + 4Ah]
+        dec     eax
+        mov     ah, 24                          ; DH = last row, DL = last column
+        xchg    al, ah
+        xchg    al, ah
+        mov     dl, al
+        mov     dh, 24
+        mov     [ebp + 14h], dx
+        mov     word [ebp + 1Ch], 0600h         ; scroll up, AL = 0: clear
+        mov     word [ebp + 18h], 0             ; CX = 0,0
+        mov     byte [ebp + 11h], 07h           ; BH = attribute
+        mov     eax, 10h
+        VMMcall Exec_Int
+.nc:    mov     word [ebp + 1Ch], 0200h         ; cursor 0,0 on page 0
+        mov     word [ebp + 14h], 0
+        mov     byte [ebp + 11h], 0
+        mov     eax, 10h
+        VMMcall Exec_Int
+        VMMcall End_Nest_Exec
+        mov     esi, client_save2
+        VMMcall Restore_Client_State
+%ifdef DEBUGE9
+        mov     al, 'E'
+        out     0E9h, al
+%endif
+        popad
+        clc
+        ret
+.no:    popad
+        stc
+        ret
+
+cols_tab dw 40, 80
 
 int10_ret:
         mov     byte [modechk_pending], 1
@@ -1487,6 +1625,7 @@ vga_n   times VGAREGS db 0
         align 4
 slots   times NSLOT * 24 db 0
 client_save times 80h db 0
+client_save2 times 80h db 0
 NMAPS   equ 8
 wc_lin  dd 0
 wc_size dd 0

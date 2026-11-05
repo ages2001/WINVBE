@@ -39,13 +39,23 @@ for A in i386 amd64; do
       $O/$A/mini.o $O/$A/i915core.o $O/$A/minirc.o $VPLIB -o $O/$A/winvbe.sys
   python3 tools/pefix.py $O/$A/winvbe.sys nonpaged
   [ $A = i386 ] && python3 tools/chkimp.py $O/$A/winvbe.sys
+  # VGA.SYS replacement (one miniport with Windows' own display drivers)
+  $CC $KFLAGS $AF -DVGAREPL -c mini/winvbe.c -o $O/$A/vgarepl.o
+  $LD -T $O/$A.x --subsystem native -e $ENT -shared --exclude-all-symbols --image-base 0x10000 --file-alignment 0x200 --section-alignment 0x200 \
+      --major-os-version 1 --minor-os-version 0 --major-subsystem-version 1 --minor-subsystem-version 0 \
+      $O/$A/vgarepl.o $O/$A/i915core.o $O/$A/minirc.o $VPLIB -o $O/$A/vga.sys
+  python3 tools/pefix.py $O/$A/vga.sys nonpaged
+  [ $A = i386 ] && python3 tools/chkimp.py $O/$A/vga.sys
 
   # display driver (kernel mode, NT 4.0 and later)
   $CC $KFLAGS $AF -c disp/winvbe.c -o $O/$A/disp.o
+  # the Direct3D HAL: floating point (x87 on i386, SSE on amd64) between
+  # EngSaveFloatingPointState and EngRestoreFloatingPointState
+  $CC $(echo "$KFLAGS" | sed 's/-mno-sse -mno-mmx//') $AF -I../d3d -c disp/d3dnt.c -o $O/$A/d3dnt.o
   ${CC%gcc}windres disp/winvbe.rc -o $O/$A/disprc.o
   $LD -T $O/$A.x --subsystem native -e $DENT -shared --exclude-all-symbols --image-base ${DLLBASE:-0x10000} --file-alignment ${DLLALIGN:-0x200} --section-alignment ${DLLALIGN:-0x200} \
       --major-os-version 4 --minor-os-version 0 --major-subsystem-version 4 --minor-subsystem-version 0 \
-      $O/$A/disp.o $O/$A/disprc.o $W32K -o $O/$A/winvbe.dll
+      $O/$A/disp.o $O/$A/d3dnt.o $O/$A/disprc.o $W32K $($CC -print-libgcc-file-name) -o $O/$A/winvbe.dll
   python3 tools/pefix.py $O/$A/winvbe.dll nonpaged
 done
 
@@ -60,18 +70,20 @@ i686-w64-mingw32-ld -T $O/i386.x --subsystem native -e _DrvEnableDriver@12 -shar
     --major-os-version 1 --minor-os-version 0 --major-subsystem-version 1 --minor-subsystem-version 0 \
     --kill-at $O/i386/disp3.o $O/i386/disp3rc.o -L$O/lib -lwinsrv -L/usr/i686-w64-mingw32/lib -lkernel32 -o $O/i386/winvbe3.dll
 python3 tools/pefix.py $O/i386/winvbe3.dll noentry
-# settings program (Win32, no C runtime; runs on NT 3.1)
+# settings program (Win32, no C runtime; runs on NT 3.1); no relocations:
+# an .exe does not need them, and with them this ld (2.42) can refuse the
+# resources (".rsrc is too large")
 CFGF="-Os -s -nostdlib -fno-builtin -ffreestanding -fno-stack-protector -fno-asynchronous-unwind-tables -Wall -Wno-unused-function"
 i686-w64-mingw32-windres cfg/winvbecf.rc -o $O/i386/cfgrc.o
 i686-w64-mingw32-gcc $CFGF -march=i386 -mtune=i686 -mno-stack-arg-probe -Wl,-e,_start@0 -Wl,--subsystem,windows:3.10 \
-    -Wl,--major-os-version,1 -Wl,--minor-os-version,0 cfg/winvbecf.c $O/i386/cfgrc.o \
+    -Wl,--major-os-version,1 -Wl,--minor-os-version,0 -Wl,--disable-reloc-section cfg/winvbecf.c $O/i386/cfgrc.o \
     -lkernel32 -luser32 -lgdi32 -ladvapi32 -o $O/i386/winvbecf.exe
 x86_64-w64-mingw32-windres cfg/winvbecf.rc -o $O/amd64/cfgrc.o
 x86_64-w64-mingw32-gcc $CFGF -Wl,-e,start -Wl,--subsystem,windows:5.02 \
     cfg/winvbecf.c $O/amd64/cfgrc.o -lkernel32 -luser32 -lgdi32 -ladvapi32 -o $O/amd64/winvbecf.exe
 ls -l $O/i386 $O/amd64 | grep -v "\.o$"
 # no Pentium Pro instructions in the i386 files (see -march above)
-for f in $O/i386/winvbe.sys $O/i386/winvbe.dll $O/i386/winvbe3.dll $O/i386/winvbecf.exe; do
+for f in $O/i386/winvbe.sys $O/i386/vga.sys $O/i386/winvbe.dll $O/i386/winvbe3.dll $O/i386/winvbecf.exe; do
   if i686-w64-mingw32-objdump -d $f 2>/dev/null | grep -q -E '[[:space:]](cmov|fcomi|fucomi)'; then
     echo "$f: instructions the 386/486/Pentium do not have"; exit 1
   fi
