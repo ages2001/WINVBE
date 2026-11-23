@@ -33,17 +33,28 @@ for A in i386 amd64; do
   # miniport
   $CC $KFLAGS $AF -c mini/winvbe.c -o $O/$A/mini.o
   $CC $KFLAGS $AF -c ../patch/i915core.c -o $O/$A/i915core.o
+  # x86 emulator for video BIOS calls (libx86emu): 32-bit NT only, where
+  # the BIOS otherwise runs in virtual 8086 mode
+  EMUO=""
+  if [ $A = i386 ]; then
+    for f in api decode mem ops ops2 prim_ops; do
+      $CC $KFLAGS $AF -DWINVBE -w -Imini/x86emu/kinc -Imini/x86emu/include -c mini/x86emu/$f.c -o $O/$A/emu_$f.o
+      EMUO="$EMUO $O/$A/emu_$f.o"
+    done
+    $CC $KFLAGS $AF -DWINVBE -Imini/x86emu/kinc -Imini/x86emu/include -c mini/emu10.c -o $O/$A/emu10.o
+    EMUO="$EMUO $O/$A/emu10.o $($CC -print-libgcc-file-name)"
+  fi
   ${CC%gcc}windres mini/winvbe.rc -o $O/$A/minirc.o
   $LD -T $O/$A.x --subsystem native -e $ENT -shared --exclude-all-symbols --image-base 0x10000 --file-alignment 0x200 --section-alignment 0x200 \
       --major-os-version 1 --minor-os-version 0 --major-subsystem-version 1 --minor-subsystem-version 0 \
-      $O/$A/mini.o $O/$A/i915core.o $O/$A/minirc.o $VPLIB -o $O/$A/winvbe.sys
+      $O/$A/mini.o $O/$A/i915core.o $O/$A/minirc.o $EMUO $VPLIB -o $O/$A/winvbe.sys
   python3 tools/pefix.py $O/$A/winvbe.sys nonpaged
   [ $A = i386 ] && python3 tools/chkimp.py $O/$A/winvbe.sys
   # VGA.SYS replacement (one miniport with Windows' own display drivers)
   $CC $KFLAGS $AF -DVGAREPL -c mini/winvbe.c -o $O/$A/vgarepl.o
   $LD -T $O/$A.x --subsystem native -e $ENT -shared --exclude-all-symbols --image-base 0x10000 --file-alignment 0x200 --section-alignment 0x200 \
       --major-os-version 1 --minor-os-version 0 --major-subsystem-version 1 --minor-subsystem-version 0 \
-      $O/$A/vgarepl.o $O/$A/i915core.o $O/$A/minirc.o $VPLIB -o $O/$A/vga.sys
+      $O/$A/vgarepl.o $O/$A/i915core.o $O/$A/minirc.o $EMUO $VPLIB -o $O/$A/vga.sys
   python3 tools/pefix.py $O/$A/vga.sys nonpaged
   [ $A = i386 ] && python3 tools/chkimp.py $O/$A/vga.sys
 

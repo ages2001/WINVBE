@@ -136,7 +136,7 @@ VARIANTS = {
 }
 for d, v in VARIANTS.items():
     prof = v.get('prof', PROF)
-    L = ['; WINVBE v1.2 - Universal VESA/VGA/SVGA display driver',
+    L = ['; WINVBE v1.3 - Universal VESA/VGA/SVGA display driver',
          '; OEMSETUP.INF for Windows %s Setup:' % (v['ver'] + (' and Windows for Workgroups 3.1/3.11' if v['ver'] == '3.1' else '')),
          ';   Display -> "Other display (Requires disk from OEM)" -> path of this folder',
          '; All files Setup needs are in this folder - no Windows disks are needed.',
@@ -165,8 +165,10 @@ for d, v in VARIANTS.items():
 # replaces them with the modes of the actual graphics card.
 RES9X = ['640,480', '800,600', '1024,768', '1152,864', '1280,720', '1280,768', '1280,800',
          '1280,960', '1280,1024', '1360,768', '1366,768', '1400,1050', '1440,900', '1600,900',
-         '1600,1200', '1680,1050', '1920,1080', '1920,1200', '2048,1536', '2560,1440', '2560,1600']
-L = ['; WINVBE v1.2 - Universal VESA/VGA/SVGA display driver',
+         '1600,1200', '1680,1050', '1920,1080', '1920,1200', '2048,1536', '2560,1080', '2560,1440',
+         '2560,1600', '3440,1440', '3840,1080', '3840,1600', '3840,2160', '4096,2160', '5120,1440',
+         '5120,2160', '5120,2880', '7680,2160', '7680,4320']
+L = ['; WINVBE v1.3 - Universal VESA/VGA/SVGA display driver',
      '; Windows 95/98/ME: Device Manager > Display adapters > (adapter) > Properties >',
      ';   Driver > Change Driver (Update Driver) > Have Disk > path of this folder',
      '',
@@ -198,7 +200,17 @@ L = ['; WINVBE v1.2 - Universal VESA/VGA/SVGA display driver',
      '',
      '[WINVBE.Models]',
      '%WINVBE.DeviceDesc%=WINVBE.Install, *PNP0900',
+     '; per-vendor matches (PCI\\VEN_xxxx&CC_0300 is a compatible id every display',
+     '; adapter of that vendor carries): Intel, AMD/ATI, nVidia and S3, ranked',
+     '; above the bare class-code match so WINVBE is chosen over a vendor driver',
+     '; that only falls back to VGA (the Intel GMA / ICH integrated graphics too)',
+     '%WINVBE.Intel%=WINVBE.Install, PCI\\VEN_8086&CC_0300',
+     '%WINVBE.AMD%=WINVBE.Install, PCI\\VEN_1002&CC_0300',
+     '%WINVBE.NVIDIA%=WINVBE.Install, PCI\\VEN_10DE&CC_0300',
+     '%WINVBE.S3%=WINVBE.Install, PCI\\VEN_5333&CC_0300',
+     '; and every other display adapter, by class code (VGA and 3D controllers)',
      '%WINVBE.DeviceDesc%=WINVBE.Install, PCI\\CC_0300',
+     '%WINVBE.DeviceDesc%=WINVBE.Install, PCI\\CC_0380',
      '',
      '[WINVBE.Install]',
      'CopyFiles=WINVBE.Copy, WINVBE.CopyCF',
@@ -256,6 +268,10 @@ for bpp in (8, 16, 24, 32):
 L += ['',
       '[Strings]',
       'WVB="WINVBE"',
-      'WINVBE.DeviceDesc="WINVBE Universal VESA/VGA/SVGA"']
+      'WINVBE.DeviceDesc="WINVBE Universal VESA/VGA/SVGA"',
+      'WINVBE.Intel="WINVBE Universal VESA/VGA/SVGA (Intel)"',
+      'WINVBE.AMD="WINVBE Universal VESA/VGA/SVGA (AMD/ATI)"',
+      'WINVBE.NVIDIA="WINVBE Universal VESA/VGA/SVGA (nVidia)"',
+      'WINVBE.S3="WINVBE Universal VESA/VGA/SVGA (S3)"']
 os.makedirs(os.path.join(outdir, 'WIN9X'), exist_ok=True)
 open(os.path.join(outdir, 'WIN9X', 'WINVBE.INF'), 'w', newline='').write('\r\n'.join(L) + '\r\n')

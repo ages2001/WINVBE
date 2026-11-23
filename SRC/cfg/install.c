@@ -389,7 +389,7 @@ static int find_windows(int interactive)
             if (n < 1 || n > nfound) { printf("Choose 1 to %d.\n", nfound); continue; }
             if (found_kind[n - 1] == 4) {
                 printf("%s is Windows NT: start it and run WINVBECF.EXE from NT\\I386\\NT3X,\n"
-                       "NT\\I386\\NT4-XP or NT\\AMD64 (see README.MD).\n", found_dir[n - 1]);
+                       "NT\\I386\\NT4 or 2KXP or NT\\AMD64 (see README.MD).\n", found_dir[n - 1]);
                 continue;
             }
             strcpy(windir, found_dir[n - 1]);
@@ -815,17 +815,24 @@ static void install_915(void)
     autoexec_915(1);
 }
 
-static int install(int w, int h, int d, int hz, int large, int access_m)
+static int install(int w, int h, int d, int hz, int large, int access_m, int no_fonts)
 {
     char src[160], dst[160], b[32];
     if (!load_ini()) { printf("Cannot read %s\\SYSTEM.INI\n", windir); return 0; }
-    if (!ms_file("VGASYS.FON", "VGASYS.FON") || !ms_file("VGAFIX.FON", "VGAFIX.FON") ||
-        !ms_file("VGAOEM.FON", "VGAOEM.FON"))
-        printf("Warning: VGA system fonts missing in %s\n", sysdir);
-    if (win31 && large) {
-        ms_file("8514SYS.FON", "8514SYS.FON");
-        ms_file("8514FIX.FON", "8514FIX.FON");
-        ms_file("8514OEM.FON", "8514OEM.FON");
+    /* /NOFONTS: install only the display driver and leave the system fonts
+       alone - the WIN.INI/[boot] fonts.fon, fixedfon.fon and oemfonts.fon
+       keep whatever this (possibly non-English) Windows already uses, and no
+       .FON file is copied or asked for.  Large fonts are not offered then. */
+    if (no_fonts) large = 0;
+    if (!no_fonts) {
+        if (!ms_file("VGASYS.FON", "VGASYS.FON") || !ms_file("VGAFIX.FON", "VGAFIX.FON") ||
+            !ms_file("VGAOEM.FON", "VGAOEM.FON"))
+            printf("Warning: VGA system fonts missing in %s\n", sysdir);
+        if (win31 && large) {
+            ms_file("8514SYS.FON", "8514SYS.FON");
+            ms_file("8514FIX.FON", "8514FIX.FON");
+            ms_file("8514OEM.FON", "8514OEM.FON");
+        }
     }
     src_path(src, "WINVBE.DRV");
     sprintf(dst, "%s\\WINVBE.DRV", sysdir);
@@ -846,8 +853,9 @@ static int install(int w, int h, int d, int hz, int large, int access_m)
         ini_add("386Enh", "device", "winvbe.386");
     }
     /* WINVBE's own 120 dpi system fonts are always installed, so large fonts
-       can be switched on later without the Windows disks */
-    {
+       can be switched on later without the Windows disks (not with /NOFONTS,
+       which touches no fonts at all) */
+    if (!no_fonts) {
         static char *wf[] = { "WVBSYS.FON", "WVBFIX.FON", "WVBOEM.FON" };
         int k;
         for (k = 0; k < 3; k++) {
@@ -877,7 +885,7 @@ static int install(int w, int h, int d, int hz, int large, int access_m)
             ini_set("boot", "oemfonts.fon", use[2]);
         }
     }
-    if (!large) {
+    if (!large && !no_fonts) {
         ini_set("boot", "fonts.fon", "vgasys.fon");
         ini_set("boot", "fixedfon.fon", "vgafix.fon");
         ini_set("boot", "oemfonts.fon", "vgaoem.fon");
@@ -1305,9 +1313,9 @@ static int revert_vga(void)
 
 int main(int argc, char **argv)
 {
-    int i, w = -1, h = -1, d = -1, hz = 0, large = 0, list = 0, vga = 0, acc = 0, unattended = 0;
+    int i, w = -1, h = -1, d = -1, hz = 0, large = 0, list = 0, vga = 0, acc = 0, unattended = 0, no_fonts = 0;
     char *s;
-    printf("WINVBE v1.2 Setup - Universal VESA/VGA/SVGA display driver for Windows 1.x-3.11\n\n");
+    printf("WINVBE v1.3 Setup - Universal VESA/VGA/SVGA display driver for Windows 1.x-3.11\n\n");
     strcpy(srcdir, argv[0]);
     s = strrchr(srcdir, '\\');
     if (s) s[1] = 0; else srcdir[0] = 0;
@@ -1320,12 +1328,16 @@ int main(int argc, char **argv)
         else if (!strnicmp(a, "R:", 2)) hz = atoi(a + 2);
         else if (!strnicmp(a, "A:", 2)) acc = atoi(a + 2);
         else if (!stricmp(a, "LARGE")) large = 1;
+        else if (!stricmp(a, "NOFONTS")) no_fonts = 1;
         else if (!stricmp(a, "LIST")) list = 1;
         else if (!stricmp(a, "VGA")) vga = 1;
         else if (!stricmp(a, "AUTO")) { w = 0; h = 0; d = 0; unattended = 1; }
         else if (!strnicmp(a, "DIR:", 4)) strcpy(windir, a + 4);
         else if (!stricmp(a, "?") || !stricmp(a, "H")) {
-            printf("INSTALL [/LIST] [/VGA] [/AUTO] [/W:x /H:y /D:bpp] [/R:hz] [/A:0|1|2] [/LARGE] [/DIR:windir]\n");
+            printf("INSTALL [/LIST] [/VGA] [/AUTO] [/W:x /H:y /D:bpp] [/R:hz] [/A:0|1|2] [/LARGE]\n"
+                   "        [/NOFONTS] [/DIR:windir]\n"
+                   "  /NOFONTS  install only the display driver; keep the current Windows fonts\n"
+                   "            (for non-English Windows that would ask for its font disks)\n");
             return 0;
         }
     }
@@ -1334,7 +1346,7 @@ int main(int argc, char **argv)
         r.x.ax = 0x3306; r.x.bx = 0;
         intdos(&r, &r);
         if (r.x.bx == 0x3205) {
-            printf("This is Windows NT. Use WINVBECF.EXE in NT\\I386\\NT3X, NT\\I386\\NT4-XP or\n"
+            printf("This is Windows NT. Use WINVBECF.EXE in NT\\I386\\NT3X, NT\\I386\\NT4 or 2KXP or\n"
                    "NT\\AMD64 instead (see README.MD).\n");
             return 1;
         }
@@ -1351,7 +1363,7 @@ int main(int argc, char **argv)
         sprintf(p, "%s\\SYSTEM32\\NTOSKRNL.EXE", windir);
         if (exists(p)) {
             printf("%s is a Windows NT directory. Start Windows NT and use WINVBECF.EXE\n"
-                   "in NT\\I386\\NT3X, NT\\I386\\NT4-XP or NT\\AMD64 (see README.MD).\n", windir);
+                   "in NT\\I386\\NT3X, NT\\I386\\NT4 or 2KXP or NT\\AMD64 (see README.MD).\n", windir);
             return 1;
         }
     }
@@ -1409,8 +1421,11 @@ int main(int argc, char **argv)
         } else { w = h = 0; d = ask_int("Bits per pixel (8/15/16/24/32, 0 = auto)", 16); }
         if (vi.ver >= 0x300)
             hz = ask_int("Refresh rate in Hz (0 = BIOS default, 1 = monitor native)", 0);
-        if (!oldwin)
-            large = ask_int("Font size: 0 = small (96 dpi), 1 = large (120 dpi)", 0);
+        if (!oldwin && !no_fonts) {
+            no_fonts = ask_int("Fonts: 0 = install WINVBE fonts, 1 = keep the current Windows fonts", 0) == 1;
+            if (!no_fonts)
+                large = ask_int("Font size: 0 = small (96 dpi), 1 = large (120 dpi)", 0);
+        }
         printf("Memory access: 0 = automatic, 1 = linear frame buffer only,\n"
                "               2 = VGA window at A000h (use when the frame buffer is above 4 GB)\n");
         acc = ask_int("Memory access", 0);
@@ -1423,7 +1438,7 @@ int main(int argc, char **argv)
         if (acc == 1) acc = 0;          /* 1.x/2.x run in real mode: no LFB */
         return install_old(w, h, d, hz, acc) ? 0 : 1;
     }
-    if (!install(w, h, d, hz, large, acc)) return 1;
+    if (!install(w, h, d, hz, large, acc, no_fonts)) return 1;
     if (!oldwin) add_run_entry();
     if (!oldwin && !win31) {
         if (d > 8 && d < 32) win30_groups_reload();

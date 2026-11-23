@@ -23,7 +23,12 @@ static void logf_(const char *f, ...)
     va_start(ap, f);
     n = wvsprintfA(b, f, ap);
     va_end(ap);
-    WriteFile(lg, b, n, &n, NULL);
+    { char o[2048]; int _i, _j = 0;
+      for (_i = 0; _i < (int) n && _j < (int) sizeof(o) - 1; _i++) {
+          if (b[_i] == '\n' && (_i == 0 || b[_i-1] != '\r')) o[_j++] = '\r';
+          o[_j++] = b[_i];
+      }
+      WriteFile(lg, o, (DWORD) _j, &n, NULL); }
     FlushFileBuffers(lg);
 }
 

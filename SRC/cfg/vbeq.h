@@ -40,7 +40,7 @@ typedef struct {
     QBYTE  digital;                     /* digital input -> LCD/flat panel likely */
     /* Bochs/QEMU/VirtualBox DISPI */
     QWORD  dispi_id;
-    QWORD  dispi_memkb;
+    QDWORD dispi_memkb;
 } VQINFO;
 
 int  vq_query(VQINFO __far *vi);        /* returns 0 if no VBE */

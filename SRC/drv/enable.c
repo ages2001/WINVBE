@@ -324,6 +324,13 @@ static void driver_init(void)
 #endif
     if (g.dpi < 48 || g.dpi > 240) g.dpi = 96;
     if (!g.pmode && g.req_access == 1) g.req_access = 0;
+#ifndef OLDWIN
+    /* the VxD's x86 emulator for the video BIOS: before the first VBE call */
+    if (g.pmode && g.enhanced) {
+        WORD m = (WORD)get_ini_int("BiosEmu", 0);
+        if (m == 1 || m == 2) vxd_biosemu(m);
+    }
+#endif
     get_ini_str("Forcevga", "0", buf, sizeof(buf));
     if (buf[0] == '1' || !vbe_probe()) {
         g.req_mode = 0x13;
@@ -635,6 +642,7 @@ WORD EXPORT Enable(LPVOID lpDevice, WORD style, LPSTR lpDevType, LPSTR lpOutFile
     /* INT 2Fh 4001h/4002h screen switch notifications exist from 3.0 on */
     if (!hooked) {
         hook_int2f(); hooked = 1;
+        vxd_ready(1);            /* the VxD may send WVB_NOTIFY now (not before) */
         /* Windows 3.x: real video cards need the VDD's help (4001h/4002h)
            for full-screen DOS boxes, their VBE mode is unknown to it */
         if (g.vddmode == 0xFF) g.vddmode = vbe_virtual_hw() ? 0 : 1;
@@ -728,7 +736,7 @@ WORD EXPORT Disable(LPVOID lpDevice)
     shadow_free();
     pdev_sync();
     vbe_text_mode();
-    if (hooked) { if (g.vdd_assist) { vdd_assist(0); g.vdd_assist = 0; } unhook_int2f(); hooked = 0; }
+    if (hooked) { vxd_ready(0); if (g.vdd_assist) { vdd_assist(0); g.vdd_assist = 0; } unhook_int2f(); hooked = 0; }
     return 1;
 }
 

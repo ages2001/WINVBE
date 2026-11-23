@@ -24,14 +24,18 @@ def build(name, a0, a1):
     npages = (len(data) + PAGE - 1) // PAGE
     # fixup records per page
     recs = [b''] * npages
+    def rec(src, tgt):
+        # 32-bit offset fixup; src is the signed offset in the page
+        if tgt < 0x10000:
+            return struct.pack('<BBhBH', 0x07, 0x00, src, 1, tgt)
+        return struct.pack('<BBhBI', 0x07, 0x10, src, 1, tgt)
     for off, tgt in relocs:
         pg = off // PAGE
-        if (off % PAGE) + 4 > PAGE:
-            raise SystemExit('relocation across a page boundary at %x' % off)
-        if tgt < 0x10000:
-            recs[pg] += struct.pack('<BBHBH', 0x07, 0x00, off % PAGE, 1, tgt)
-        else:
-            recs[pg] += struct.pack('<BBHBI', 0x07, 0x10, off % PAGE, 1, tgt)
+        recs[pg] += rec(off % PAGE, tgt)
+        if (off % PAGE) + 4 > PAGE and pg + 1 < npages:
+            # across a page boundary: the next page gets the same fixup with
+            # a negative source offset (as LINK386 writes it)
+            recs[pg + 1] += rec(off % PAGE - PAGE, tgt)
     fixrec = b''.join(recs)
     fixpage = b''
     acc = 0

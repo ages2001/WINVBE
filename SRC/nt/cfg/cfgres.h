@@ -39,3 +39,4 @@
 #define IDC_FAPPLY    250
 #define IDC_FNOTE     251
 #define IDC_FPREVIEW  252
+#define IDC_FINT10    253

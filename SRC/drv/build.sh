@@ -30,8 +30,8 @@ for v in 30:w3:VGA30.DRV 31:w3:VGA31.DRV 9x:w9:-; do
   # version resource (Windows 3.1 and later show it: DXDIAG, file properties)
   [ $n = 30 ] || cat >> obj/res$n/winvbe.rc <<'VEOF'
 1 VERSIONINFO
-FILEVERSION 1,2,0,0
-PRODUCTVERSION 1,2,0,0
+FILEVERSION 1,3,0,0
+PRODUCTVERSION 1,3,0,0
 FILEFLAGSMASK 0x3F
 FILEFLAGS 0
 FILEOS 0x1
@@ -44,12 +44,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "WINVBE\0"
             VALUE "FileDescription", "WINVBE Universal VESA/VGA/SVGA display driver\0"
-            VALUE "FileVersion", "1.2\0"
+            VALUE "FileVersion", "1.3\0"
             VALUE "InternalName", "DISPLAY\0"
             VALUE "LegalCopyright", "GNU General Public License v3\0"
             VALUE "OriginalFilename", "WINVBE.DRV\0"
             VALUE "ProductName", "WINVBE\0"
-            VALUE "ProductVersion", "1.2\0"
+            VALUE "ProductVersion", "1.3\0"
         END
     END
     BLOCK "VarFileInfo"

@@ -1,20 +1,22 @@
 #!/bin/sh
-# pack.sh <out.zip> : build the WINVBE12 distribution tree and zip it
+# pack.sh <out.zip> : build the WINVBE13 distribution tree and zip it
 set -e
 cd "$(dirname "$0")/.."
-OUT=$(realpath -m "${1:-WINVBE_v1.2.zip}")
-ST=$(mktemp -d)/WINVBE12
+OUT=$(realpath -m "${1:-WINVBE_v1.3.zip}")
+ST=$(mktemp -d)/WINVBE13
 mkdir -p $ST
 python3 tools/mkinf.py dist >/dev/null
 for f in INSTALL.EXE GDITEST.EXE 915PATCH.EXE 915PATCH.VXD; do cp bin/$f $ST/; done
 cp README.md LICENSE $ST/
 cp gl/MESA-LICENSE.TXT $ST/MESA.TXT
+cp nt/mini/x86emu/LICENSE $ST/X86EMU.TXT
 mkdir -p $ST/docs/images; cp docs/images/*.png $ST/docs/images/
 [ -f test/dd/ddtest.exe ] || sh test/build32.sh
 mkdir -p $ST/TEST
 for f in dd/ddtest dd/dcitest dd/yuvtest dd/ddgbl dd/gamtest d3d/d3dtest d3d/d3d6test d3d/gltest gdi32/w32gdi gdi32/dbgrun; do
     cp test/$f.exe $ST/TEST/$(basename $f | tr a-z A-Z).EXE
 done
+cp test/misc/scrollb.exe $ST/TEST/SCROLLB.EXE
 cp gl/obj/icdtest.exe $ST/TEST/ICDTEST.EXE
 cp gl/obj64/icdtest.exe $ST/TEST/ICDTST64.EXE
 # one folder per Windows version; INSTALL.EXE takes the files of the folder
@@ -34,24 +36,30 @@ cp bin/915PATCH.VXD $ST/WIN9X/
 mkdir -p $ST/WIN2X $ST/WIN1X
 cp bin/WIN2X/WINVBE.DRV bin/WIN2X/WINVBE.LGO bin/WIN2X/WINVBECF.EXE dist/WIN2X/PREP2X.BAT msfiles/WIN2X/* $ST/WIN2X/
 cp bin/WIN1X/WINVBE.DRV bin/WIN1X/WINVBE.LGO bin/WIN1X/WINVBECF.EXE dist/WIN1X/PATCH1X.BAT $ST/WIN1X/
-# Windows NT: 3.1/3.5/3.51 (NT\I386\NT3X), 4.0-XP/2003 (NT\I386\NT4-XP), x64 (NT\AMD64)
-mkdir -p $ST/NT/I386/NT3X $ST/NT/I386/NT4-XP $ST/NT/AMD64
+# Windows NT: 3.1/3.5/3.51 (NT\I386\NT3X), 4.0 non-PnP (NT\I386\NT4),
+# 2000/XP/2003 PnP (NT\I386\2KXP), x64 (NT\AMD64).  NT4 and 2KXP share the
+# same binaries - only the INF differs (NT 4.0 is not Plug and Play).
+mkdir -p $ST/NT/I386/NT3X $ST/NT/I386/NT4 $ST/NT/I386/2KXP $ST/NT/AMD64
 python3 nt/inf/mkinfnt.py $ST
 for f in WINVBE.SYS WINVBE.DLL WINVBECF.EXE; do
   l=$(echo $f | tr A-Z a-z)
   cp bin/NT/I386/NT3X/$l $ST/NT/I386/NT3X/$f
-  cp bin/NT/I386/NT4-XP/$l $ST/NT/I386/NT4-XP/$f
+  cp bin/NT/I386/NT4-XP/$l $ST/NT/I386/NT4/$f
+  cp bin/NT/I386/NT4-XP/$l $ST/NT/I386/2KXP/$f
   cp bin/NT/AMD64/$l $ST/NT/AMD64/$f
 done
-# the OpenGL ICD (32-bit; on x64 for 32-bit programs)
-cp bin/WVBGL32.DLL bin/WVBGLX.DLL bin/WVBGLS.DLL $ST/NT/I386/NT4-XP/
+# the OpenGL ICD (32-bit; on x64 for 32-bit programs) into both NT4 and 2KXP
+cp bin/WVBGL32.DLL bin/WVBGLX.DLL bin/WVBGLS.DLL $ST/NT/I386/NT4/
+cp bin/WVBGL32.DLL bin/WVBGLX.DLL bin/WVBGLS.DLL $ST/NT/I386/2KXP/
 # NT 3.1/3.5x OpenGL: the same ICD, OPENGL32.DLL (full OpenGL 2.1) to put next
 # to programs, and for NT 3.1 also WVGDI.DLL and the GL31PAT import patcher.
+# GL31SYS.EXE enables OpenGL system-wide on NT 3.1 (WINVBECF runs it at install).
 cp bin/WVBGL32.DLL bin/WVBGLX.DLL bin/WVBGLS.DLL $ST/NT/I386/NT3X/
 mkdir -p $ST/NT/I386/NT3X/GL
 cp bin/NT3X-OPENGL32.DLL $ST/NT/I386/NT3X/GL/OPENGL32.DLL
 cp bin/WVGDI.DLL $ST/NT/I386/NT3X/GL/WVGDI.DLL
 cp bin/GL31PAT.EXE $ST/NT/I386/NT3X/GL/GL31PAT.EXE
+cp bin/GL31SYS.EXE $ST/NT/I386/NT3X/GL/GL31SYS.EXE
 cp dist/NT3X-GL-README.TXT $ST/NT/I386/NT3X/GL/README.TXT 2>/dev/null || true
 # x64: the 64-bit ICD, and the 32-bit one for SysWOW64 (the INF renames it)
 cp bin/WVBGL64.DLL $ST/NT/AMD64/WVBGL32.DLL
@@ -85,9 +93,10 @@ cp test/d3d/*.c $S/test/d3d/
 cp test/gdi32/*.c $S/test/gdi32/
 cp tools/*.py tools/*.c tools/pack.sh $S/tools/
 cp res/* $S/res/
-cp vxd/*.asm vxd/build.sh $S/vxd/
+cp vxd/*.asm vxd/*.c vxd/*.s vxd/*.ld vxd/build.sh $S/vxd/; cp tools/pe2flat.py tools/mkvxd32.py $S/tools/ 2>/dev/null || true
 cp nt/build.sh $S/nt/
-cp nt/mini/*.c nt/mini/*.rc $S/nt/mini/; cp nt/disp/*.c nt/disp/*.h nt/disp/*.rc $S/nt/disp/; cp nt/common/*.h $S/nt/common/
+cp nt/mini/*.c nt/mini/*.h nt/mini/*.rc $S/nt/mini/; cp -r nt/mini/x86emu $S/nt/mini/;
+mkdir -p $S/tools/skl-vga $S/test/misc; cp tools/skl-vga/* $S/tools/skl-vga/; cp test/misc/scrollb.c $S/test/misc/; cp nt/disp/*.c nt/disp/*.h nt/disp/*.rc $S/nt/disp/; cp nt/common/*.h $S/nt/common/
 cp nt/cfg/*.c nt/cfg/*.h nt/cfg/*.rc $S/nt/cfg/; cp nt/lib/*.def $S/nt/lib/; cp nt/inf/*.py $S/nt/inf/
 cp nt/tools/*.py nt/tools/*.c $S/nt/tools/
 cp dist/WIN1X/PATCH1X.BAT $S/dist/WIN1X/; cp dist/WIN2X/PREP2X.BAT $S/dist/WIN2X/
@@ -97,6 +106,6 @@ for t in $ST/WIN30/OEMSETUP.INF $ST/WIN31/OEMSETUP.INF $ST/WIN9X/WINVBE.INF; do
   python3 -c "import sys; p=sys.argv[1]; d=open(p,'rb').read().replace(b'\r\n',b'\n').replace(b'\n',b'\r\n'); open(p,'wb').write(d)" $t
 done
 rm -f "$OUT"
-(cd $(dirname $ST) && zip -q -r -X "$OUT.tmp" WINVBE12)
+(cd $(dirname $ST) && zip -q -r -X "$OUT.tmp" WINVBE13)
 mv "$OUT.tmp" "$OUT"
 ls -l "$OUT"

@@ -31,6 +31,7 @@ cp gl/objsse/wvbgls.dll bin/WVBGLS.DLL
 cp gl/obj/nt3x/opengl32.dll bin/NT3X-OPENGL32.DLL
 cp gl/obj/wvgdi.dll bin/WVGDI.DLL
 cp gl/obj/gl31pat.exe bin/GL31PAT.EXE
+cp gl/obj/gl31sys.exe bin/GL31SYS.EXE
 cp gl/obj64/wvbgl32.dll bin/WVBGL64.DLL
 cp cfg/obj/winvbecf.exe bin/WINVBECF.EXE
 cp cfg/obj/wvbpower.scr bin/WVBPOWER.SCR

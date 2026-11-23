@@ -11,6 +11,12 @@
 
 #ifdef __WATCOMC__
 #include <i86.h>
+/* Windows 1.x/2.x: real mode, VGA window only - no screens beyond 4095
+   pixels, and the code segment is close to 64 KB */
+#ifdef OLDWIN
+#define EDIDX_DTD_ONLY
+#endif
+#include "edidx.h"
 typedef unsigned char  BYTE;
 typedef unsigned short WORD;
 typedef unsigned long  DWORD;
@@ -450,6 +456,7 @@ typedef struct {
     BYTE  have_edid;
     BYTE  edid[128];
     WORD  edid_w, edid_h, edid_hz;
+    EDIDTM edtm;                /* native timing (base block or extension) */
 
     /* current mode */
     MODEINFO mi;
@@ -683,6 +690,8 @@ DWORD lut_px(DWORD p);
 int  shadow_alloc(DWORD size);
 void shadow_free(void);
 WORD vxd_wc(DWORD lin, DWORD size, DWORD phys);
+void vxd_ready(WORD on);
+void vxd_biosemu(WORD mode);
 void row_read(SURF *s, WORD y, WORD x, WORD n, BYTE *buf);  /* to working format */
 void row_write(SURF *s, WORD y, WORD x, WORD n, const BYTE *buf);
 void pix_fill(BYTE *buf, WORD n, DWORD pix, BYTE Bpp);

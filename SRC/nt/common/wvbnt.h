@@ -17,6 +17,7 @@
 #define WVB_REG_ACCESS   L"WinVbe.Access"   /* DWORD: 0 auto, 1 linear frame buffer only, 2 VGA window only */
 /* display features (WINVBE.DLL, read when the display is switched on) */
 #define WVB_REG_ROTATE   L"WinVbe.Rotate"   /* DWORD: 0, 90, 180, 270 degrees (clockwise) */
+#define WVB_REG_INT10    L"WinVbe.Int10"    /* DWORD: video BIOS calls: 0 auto (Windows, else the emulator), 1 Windows (V86) only, 2 x86 emulator (NT x86) */
 #define WVB_REG_SHADOW   L"WinVbe.Shadow"   /* DWORD: shadow frame buffer: 0 auto (real cards), 1 on, 2 off */
 #define WVB_REG_GAMMA    L"WinVbe.Gamma"    /* DWORD: gamma in 1/100 (100 = 1.0, 30 - 300) */
 #define WVB_REG_BRIGHT   L"WinVbe.Brightness" /* DWORD: brightness -100 .. 100 (stored + 1000) */
@@ -83,6 +84,9 @@ typedef struct {
     char           patch[160];   /* result of the 915 patch (first line) */
     unsigned long  nmodes;
     WVBMODE        modes[WVB_MAXMODES];
+    /* 1.3: the native timing, also from the EDID extension blocks
+       (DisplayID, CTA-861) for monitors beyond 4095 pixels; 0 = none */
+    unsigned short natw, nath, nathz, pad2;
 } WVBINFO;
 #pragma pack(pop)
 

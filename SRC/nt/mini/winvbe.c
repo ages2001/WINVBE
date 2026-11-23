@@ -21,6 +21,10 @@
 #include <ntddvdeo.h>
 #include <stdarg.h>
 #include "../common/wvbnt.h"
+#include "../../drv/edidx.h"
+#ifdef _X86_
+#include "emu10.h"
+#endif
 
 /* i915core.c works on a BIOS image through plain pointers here */
 #include "../../patch/i915core.h"
@@ -101,6 +105,7 @@ typedef struct {
     UCHAR  banked, win;
     USHORT gran_kb, winsz_kb;
     UCHAR  planar;              /* VGA mode 12h, 640x480 in 16 colours (VGA.DLL) */
+    UCHAR  dispi;               /* not in the BIOS list: set through the Bochs DISPI registers */
 } MODE;
 
 typedef struct {
@@ -122,6 +127,7 @@ typedef struct {
     UCHAR  edid[128];
     int    edid_ok;
     USHORT edid_w, edid_h, edid_hz;
+    EDIDTM edtm;                                 /* native timing (base block or extension) */
     UCHAR  edid_minv, edid_maxv, edid_maxh;     /* range limits (0 = none) */
     USHORT edid_maxclk;                          /* MHz */
     char   oem[80];
@@ -132,6 +138,8 @@ typedef struct {
     ULONG  cur_hz;              /* entry of wvb_hz, 0xFF = BIOS default */
     ULONG  cur_pitch;
     int    mode_set;
+    int    uefi_fb;             /* a UEFI VBE shim: the mode is pre-set (GOP),
+                                   4F02 cannot change it, so use it as it is */
     UCHAR  dacbits;
     PVOID  fbmap;               /* mapped frame buffer (last map) */
     ULONG  fbsize;
@@ -154,6 +162,11 @@ typedef struct {
     WCHAR  patchcmd[80];
     char   patchres[160];
     WVBINFO info;               /* written to the registry */
+    /* video BIOS calls through the x86 emulator (emu10.c, NT x86): for a
+       BIOS that cannot run in virtual 8086 mode */
+    ULONG  int10_mode;          /* WinVbe.Int10: 0 auto, 1 Windows only, 2 emulator */
+    void  *emu;
+    int    use_emu;
 } DEVEXT;
 
 /* ------------------------------------------------------------------ */
@@ -252,8 +265,124 @@ static int lowmem_ok(DEVEXT *dx)
 
 /* call INT 10h; with r->usebuf, buf[0..inlen) is copied to the buffer
    (ES:DI) before and buf[0..outlen) back after the call */
+#ifdef _X86_
+static void emu_vdbg(const char *f, ...)
+{
+    char b[256];
+    va_list ap;
+    if (!g_dx || !g_dx->debug) return;
+    va_start(ap, f);
+    vfmt(b, sizeof(b), f, ap);
+    va_end(ap);
+    dputs("WVBNT: ");
+    dputs(b);
+}
+
+/* switch the video BIOS calls to the x86 emulator (1 = done) */
+static int emu_start(DEVEXT *dx, const char *why)
+{
+    if (dx->use_emu) return 1;
+    if (dx->int10_mode == 1) return 0;
+    emu_dbg = emu_vdbg;
+    if (!dx->emu) dx->emu = emu_create();
+    if (!dx->emu) { dbg("emulator not available (%s)\n", why); return 0; }
+    dx->use_emu = 1;
+    dbg("video BIOS calls now through the x86 emulator: %s\n", why);
+    return 1;
+}
+
+static int int10(DEVEXT *dx, RM *r, void *buf, ULONG inlen, ULONG outlen);
+
+/* Intel graphics of Skylake (6th generation) and later: their video BIOS
+   reaches its registers in "unreal" mode, which cannot run in virtual
+   8086 mode (Windows 2000 stops with 0x0000000A in the attempt) */
+static int intel_unreal_bios(DEVEXT *dx)
+{
+    ULONG id = dx->pcicfg[0], cls = dx->pcicfg[2];
+    USHORT ven, dev;
+    if (!dx->pci_ok) {
+        /* NT 4.0 / 2000 without the PCI header: Intel graphics are always
+           at 00:02.0 (configuration mechanism #1) */
+        outl(0xCF8, 0x80000000UL | (2UL << 11)); id = inl(0xCFC);
+        outl(0xCF8, 0x80000000UL | (2UL << 11) | 8); cls = inl(0xCFC);
+    }
+    ven = (USHORT)(id & 0xFFFF); dev = (USHORT)(id >> 16);
+    if (ven != 0x8086 || (cls >> 24) != 0x03) return 0;
+    switch (dev >> 8) {
+    case 0x19:              /* Skylake */
+    case 0x59:              /* Kaby Lake */
+    case 0x3E:              /* Coffee Lake, Whiskey Lake */
+    case 0x87:              /* Amber Lake */
+    case 0x9B:              /* Comet Lake */
+    case 0x5A:              /* Cannon Lake, Apollo Lake */
+    case 0x31:              /* Gemini Lake */
+    case 0x8A:              /* Ice Lake */
+    case 0x45: case 0x4E:   /* Elkhart Lake, Jasper Lake */
+    case 0x9A:              /* Tiger Lake */
+    case 0x4C:              /* Rocket Lake */
+    case 0x46: case 0xA7:   /* Alder Lake, Raptor Lake */
+    case 0x7D: case 0x64:   /* Meteor Lake, Lunar Lake */
+        return 1;
+    }
+    return dev == 0x0A84;   /* Broxton */
+}
+
+/* WinVbe.Int10 = 0: the first BIOS calls (EDID, VBE information) go
+   through the emulator, where nothing can crash; a BIOS that uses
+   privileged instructions there (or Intel graphics of Skylake and later)
+   stays in the emulator, every other one goes back to Windows' V86 calls */
+static void emu_probe(DEVEXT *dx)
+{
+    UCHAR b[512];
+    RM r;
+    int intel = intel_unreal_bios(dx), ok;
+    if (dx->use_emu || dx->int10_mode != 0) return;
+    if (!emu_start(dx, intel ? "Intel graphics of Skylake or later" : "probe")) return;
+    emu_clear_priv(dx->emu);
+    memset(&r, 0, sizeof(r));
+    r.eax = 0x4F15; r.ebx = 1; r.usebuf = 1;
+    memset(b, 0, 128);
+    int10(dx, &r, b, 128, 128);
+    memset(b, 0, sizeof(b));
+    memcpy(b, "VBE2", 4);
+    memset(&r, 0, sizeof(r));
+    r.eax = 0x4F00; r.usebuf = 1;
+    ok = int10(dx, &r, b, 512, 512) && (USHORT)r.eax == 0x004F && !memcmp(b, "VESA", 4);
+    dbg("emulator probe: VBE %s, privileged instructions %u, Intel unreal BIOS %u\n",
+        ok ? "ok" : "failed", emu_priv(dx->emu), intel);
+    if (intel || (ok && emu_priv(dx->emu))) {
+        dbg("video BIOS calls stay in the x86 emulator\n");
+        return;
+    }
+    dx->use_emu = 0;
+}
+
+static int emu_int10(DEVEXT *dx, RM *r, void *buf, ULONG inlen, ULONG outlen)
+{
+    EMUREGS e;
+    memset(&e, 0, sizeof(e));
+    e.eax = r->eax; e.ebx = r->ebx; e.ecx = r->ecx; e.edx = r->edx; e.esi = r->esi; e.edi = r->edi;
+    e.es = r->es;
+    if (r->usebuf) {
+        if (inlen > EMU_BUFSIZE || outlen > EMU_BUFSIZE) return 0;
+        e.es = EMU_BUFSEG; e.edi = 0;
+        if (inlen) emu_write(dx->emu, (ULONG)EMU_BUFSEG << 4, buf, inlen);
+    }
+    if (!emu_int(dx->emu, 0x10, &e)) return 0;
+#ifdef DEVDEBUG
+    dbg("emu int10 %x -> ax=%x bx=%x es:di=%x:%x\n", r->eax, e.eax, e.ebx, e.es, e.edi);
+#endif
+    r->eax = e.eax; r->ebx = e.ebx; r->ecx = e.ecx; r->edx = e.edx; r->esi = e.esi; r->edi = e.edi; r->es = e.es;
+    if (r->usebuf && outlen) emu_read(dx->emu, (ULONG)EMU_BUFSEG << 4, buf, outlen);
+    return 1;
+}
+#endif
+
 static int int10(DEVEXT *dx, RM *r, void *buf, ULONG inlen, ULONG outlen)
 {
+#ifdef _X86_
+    if (dx->use_emu) return emu_int10(dx, r, buf, inlen, outlen);
+#endif
     if (dx->have_i10) {
         INT10_BIOS_ARGUMENTS a;
         VideoPortZeroMemory(&a, sizeof(a));
@@ -308,6 +437,9 @@ static int int10(DEVEXT *dx, RM *r, void *buf, ULONG inlen, ULONG outlen)
 static int rm_read(DEVEXT *dx, USHORT seg, USHORT off, void *dst, ULONG len)
 {
     ULONG lin = ((ULONG)seg << 4) + off;
+#ifdef _X86_
+    if (dx->use_emu) return emu_read(dx->emu, lin, dst, len);
+#endif
     if (lin >= 0xC0000 && lin + len <= 0x100000 && dx->rom) {
         memcpy(dst, dx->rom + (lin - 0xC0000), len);
         return 1;
@@ -358,7 +490,8 @@ static void read_edid(DEVEXT *dx)
 {
     RM r;
     UCHAR *e = dx->edid;
-    int i;
+    UCHAR ext[128];
+    int i, n;
     UCHAR sum = 0;
     memset(&r, 0, sizeof(r));
     r.eax = 0x4F15; r.ebx = 0x0001; r.usebuf = 1;
@@ -368,14 +501,25 @@ static void read_edid(DEVEXT *dx)
     for (i = 0; i < 128; i++) sum += e[i];
     if (sum) dbg("EDID checksum bad\n");
     dx->edid_ok = 1;
-    dx->edid_w = e[56] | ((e[58] & 0xF0) << 4);
-    dx->edid_h = e[59] | ((e[61] & 0xF0) << 4);
-    {
-        ULONG clk = (e[54] | (e[55] << 8)) * 10000UL;
-        ULONG ht = dx->edid_w + (e[57] | ((e[58] & 0x0F) << 8));
-        ULONG vt = dx->edid_h + (e[60] | ((e[61] & 0x0F) << 8));
-        dx->edid_hz = (ht && vt) ? (USHORT)((clk + ht * vt / 2) / (ht * vt)) : 60;
+    memset(&dx->edtm, 0, sizeof(dx->edtm));
+    edidx_dtd(e + 54, &dx->edtm);
+    /* extension blocks: DisplayID / CTA-861 timings beyond 4095 pixels */
+    n = e[126] > 3 ? 3 : e[126];
+    for (i = 1; i <= n; i++) {
+        EDIDTM t;
+        memset(&r, 0, sizeof(r));
+        r.eax = 0x4F15; r.ebx = 0x0001; r.edx = (ULONG)i; r.usebuf = 1;
+        memset(ext, 0, sizeof(ext));
+        if (!int10(dx, &r, ext, 128, 128) || (USHORT)r.eax != 0x004F) break;
+        memset(&t, 0, sizeof(t));
+        if (edidx_ext(ext, &t)) {
+            dbg("EDID extension %u (%x): %ux%u@%u\n", i, ext[0], t.ha, t.va, t.hz);
+            edidx_merge(&dx->edtm, &t);
+        }
     }
+    dx->edid_w = dx->edtm.ha;
+    dx->edid_h = dx->edtm.va;
+    dx->edid_hz = dx->edtm.src ? dx->edtm.hz : 60;
     for (i = 54; i <= 108; i += 18) {
         if (e[i] == 0 && e[i + 1] == 0 && e[i + 3] == 0xFD) {
             dx->edid_minv = e[i + 5]; dx->edid_maxv = e[i + 6];
@@ -561,7 +705,7 @@ typedef struct {
 #pragma pack(pop)
 
 /* VESA CVT 1.2 (standard and reduced blanking), integer math */
-static void calc_cvt(CRTC *c, ULONG w, ULONG h, ULONG hz, int reduced)
+static int calc_cvt(CRTC *c, ULONG w, ULONG h, ULONG hz, int reduced)
 {
     ULONG vsync, htotal, vtotal, pclk;
     w &= ~7UL;
@@ -579,6 +723,7 @@ static void calc_cvt(CRTC *c, ULONG w, ULONG h, ULONG hz, int reduced)
         c->hss = (USHORT)(w + 48); c->hse = (USHORT)(w + 48 + 32);
         c->vss = (USHORT)(h + 3);  c->vse = (USHORT)(h + 3 + vsync);
         c->flags = 0x08;
+        if (hz * vtotal > 0xFFFFFFFFUL / htotal) return 0;     /* beyond a 32-bit pixel clock */
         pclk = hz * vtotal * htotal;
         pclk = (pclk / 250000UL) * 250000UL;
     } else {
@@ -591,7 +736,8 @@ static void calc_cvt(CRTC *c, ULONG w, ULONG h, ULONG hz, int reduced)
         if ((LONG)idc_m < 20000L) idc_m = 20000UL;
         hblank = (w * idc_m / (100000UL - idc_m)) / 16 * 16;
         htotal = w + hblank;
-        khz = htotal * 1000000UL / hpe_ns;
+        /* htotal * 10^6 overflows 32 bits beyond 4294 pixels: two steps */
+        khz = htotal * 1000UL / hpe_ns * 1000UL + (htotal * 1000UL % hpe_ns) * 1000UL / hpe_ns;
         pclk = (khz / 250UL) * 250000UL;
         hsync = ((htotal * 8 / 100 + 4) / 8) * 8;
         c->hse = (USHORT)(w + hblank / 2);
@@ -603,30 +749,23 @@ static void calc_cvt(CRTC *c, ULONG w, ULONG h, ULONG hz, int reduced)
     c->vtotal = (USHORT)vtotal;
     c->pclk = pclk;
     c->refresh = (USHORT)(pclk / (htotal * vtotal / 100));
+    return 1;
 }
 
 static int fill_crtc(DEVEXT *dx, CRTC *c, MODE *md, ULONG hz)
 {
     memset(c, 0, sizeof(*c));
-    if (dx->edid_ok && md->w == dx->edid_w && md->h == dx->edid_h && hz == dx->edid_hz) {
-        UCHAR *d = dx->edid + 54;
-        ULONG clk = d[0] | (d[1] << 8);
-        ULONG ha = d[2] | ((d[4] & 0xF0) << 4), hb = d[3] | ((d[4] & 0x0F) << 8);
-        ULONG va = d[5] | ((d[7] & 0xF0) << 4), vb = d[6] | ((d[7] & 0x0F) << 8);
-        ULONG hso = d[8] | ((d[11] & 0xC0) << 2), hsw = d[9] | ((d[11] & 0x30) << 4);
-        ULONG vso = (d[10] >> 4) | ((d[11] & 0x0C) << 2), vsw = (d[10] & 0x0F) | ((d[11] & 0x03) << 4);
-        c->htotal = (USHORT)(ha + hb); c->hss = (USHORT)(ha + hso); c->hse = (USHORT)(ha + hso + hsw);
-        c->vtotal = (USHORT)(va + vb); c->vss = (USHORT)(va + vso); c->vse = (USHORT)(va + vso + vsw);
-        if ((d[17] & 0x18) == 0x18) {
-            if (!(d[17] & 0x02)) c->flags |= 0x04;
-            if (!(d[17] & 0x04)) c->flags |= 0x08;
-        }
-        c->pclk = clk * 10000UL;
+    if (dx->edid_ok && dx->edtm.pclk10k && md->w == dx->edtm.ha && md->h == dx->edtm.va && hz == dx->edid_hz) {
+        EDIDTM *e = &dx->edtm;
+        c->htotal = (USHORT)(e->ha + e->hb); c->hss = (USHORT)(e->ha + e->hso); c->hse = (USHORT)(e->ha + e->hso + e->hsw);
+        c->vtotal = (USHORT)(e->va + e->vb); c->vss = (USHORT)(e->va + e->vso); c->vse = (USHORT)(e->va + e->vso + e->vsw);
+        if (!e->hpos) c->flags |= 0x04;
+        if (!e->vpos) c->flags |= 0x08;
+        c->pclk = e->pclk10k * 10000UL;
         c->refresh = (USHORT)(c->pclk / ((ULONG)c->htotal * c->vtotal / 100));
         return 1;
     }
-    calc_cvt(c, md->w, md->h, hz, dx->edid_ok && (dx->edid[20] & 0x80));
-    return 1;
+    return calc_cvt(c, md->w, md->h, hz, dx->edid_ok && (dx->edid[20] & 0x80));
 }
 
 /* refresh rates that are allowed for a mode */
@@ -650,7 +789,7 @@ static UCHAR hz_mask(DEVEXT *dx, MODE *md)
                 /* no range limits: digital panels only get 60 Hz */
                 if ((dx->edid[20] & 0x80) || hz > 85) continue;
             } else {
-                fill_crtc(dx, &c, md, hz);
+                if (!fill_crtc(dx, &c, md, hz)) continue;
                 if (hz < dx->edid_minv || hz > dx->edid_maxv) continue;
                 if (dx->edid_maxh && (ULONG)c.vtotal * hz / 1000 > dx->edid_maxh) continue;
                 if (dx->edid_maxclk && c.pclk / 1000000UL > dx->edid_maxclk) continue;
@@ -688,6 +827,7 @@ static void gather(DEVEXT *dx)
     ULONG nlist = 0, i;
     RM r;
     ULONG lp;
+    int vbe_ok;
 
     if (dx->gathered) return;
 #ifdef _X86_
@@ -700,10 +840,16 @@ static void gather(DEVEXT *dx)
 #ifdef DEVDEBUG
     dbg("gather\n");
 #endif
+#ifdef _X86_
+    emu_probe(dx);
+#endif
     read_edid(dx);
     patch915(dx);
     dbg("915 patch: %s\n", dx->patchres);
 
+#ifdef _X86_
+    if (dx->int10_mode == 2) emu_start(dx, "WinVbe.Int10 = 2");
+#endif
     memset(vi, 0, sizeof(vi));
     memcpy(vi, "VBE2", 4);
     memset(&r, 0, sizeof(r));
@@ -711,7 +857,20 @@ static void gather(DEVEXT *dx)
 #ifndef TEST_NOVBE
 #define TEST_NOVBE 0
 #endif
-    if (!int10(dx, &r, vi, 512, 512) || (USHORT)r.eax != 0x004F || memcmp(vi, "VESA", 4) || TEST_NOVBE) {
+    vbe_ok = int10(dx, &r, vi, 512, 512) && (USHORT)r.eax == 0x004F && !memcmp(vi, "VESA", 4);
+#ifdef _X86_
+    /* a video BIOS that does not work in virtual 8086 mode: the same call
+       through the emulator */
+    if (!vbe_ok && !dx->use_emu && emu_start(dx, "VBE 4F00 failed in V86 mode")) {
+        read_edid(dx);
+        memset(vi, 0, sizeof(vi));
+        memcpy(vi, "VBE2", 4);
+        memset(&r, 0, sizeof(r));
+        r.eax = 0x4F00; r.usebuf = 1;
+        vbe_ok = int10(dx, &r, vi, 512, 512) && (USHORT)r.eax == 0x004F && !memcmp(vi, "VESA", 4);
+    }
+#endif
+    if (!vbe_ok || TEST_NOVBE) {
         dbg("no VBE (ax=%x)\n", r.eax);
         dx->vbever = 0;
         dx->nmodes = 0;
@@ -808,6 +967,54 @@ static void gather(DEVEXT *dx)
         dbg(" mode %x %ux%ux%u pitch=%u %s=%x gran=%uK hz=%x\n", md.vbe, md.w, md.h, md.bpp, md.pitch,
             md.banked ? "window" : "lfb", md.phys, md.gran_kb, md.hzmask);
     }
+    /* Bochs/QEMU/VirtualBox (DISPI): the adapter sets any size, so offer
+       the monitor's native size and the common large ones the BIOS list
+       stops short of (ultrawide 21:9 and 32:9, 4K, 5K, 8K) */
+    {
+        static const USHORT big[][2] = {
+            { 1920, 1080 }, { 1920, 1200 }, { 2560, 1080 }, { 2560, 1440 }, { 2560, 1600 },
+            { 3440, 1440 }, { 3840, 1080 }, { 3840, 1600 }, { 3840, 2160 }, { 4096, 2160 },
+            { 5120, 1440 }, { 5120, 2160 }, { 5120, 2880 }, { 7680, 2160 }, { 7680, 4320 }
+        };
+        static const UCHAR bpps[] = { 8, 16, 24, 32 };
+        USHORT id = dispi_rd(0), maxw = 0, maxh = 0;
+        ULONG phys = 0, k, b, nb = sizeof(big) / sizeof(big[0]);
+        for (k = 0; k < dx->nmodes; k++)
+            if (!dx->modes[k].banked && dx->modes[k].phys) { phys = dx->modes[k].phys; break; }
+        if (id >= 0xB0C0 && id <= 0xB0CF && phys && dx->access != 2) {
+            if (id >= 0xB0C2) {                 /* GETCAPS: the largest size it takes */
+                USHORT en = dispi_rd(4);
+                dispi_wr(4, (USHORT)(en | 0x02));
+                maxw = dispi_rd(1); maxh = dispi_rd(2);
+                dispi_wr(4, en);
+            }
+            if (maxw < 640 || maxh < 480) maxw = maxh = 16384;
+            for (k = 0; k <= nb; k++) {
+                USHORT w = k < nb ? big[k][0] : dx->edid_w, h = k < nb ? big[k][1] : dx->edid_h;
+                if (w < 640 || h < 480 || w > maxw || h > maxh) continue;
+                for (b = 0; b < sizeof(bpps) && dx->nmodes < WVB_MAXMODES; b++) {
+                    MODE md;
+                    ULONG j;
+                    for (j = 0; j < dx->nmodes; j++)
+                        if (dx->modes[j].w == w && dx->modes[j].h == h &&
+                            (dx->modes[j].bpp == bpps[b] || (bpps[b] == 16 && dx->modes[j].bpp == 15))) break;
+                    if (j < dx->nmodes) continue;
+                    memset(&md, 0, sizeof(md));
+                    md.w = w; md.h = h; md.bpp = bpps[b]; md.Bpp = (UCHAR)(bpps[b] / 8);
+                    md.pitch = (ULONG)w * md.Bpp;
+                    if (dx->memkb && (md.pitch * h + 1023) / 1024 > dx->memkb) continue;
+                    md.phys = phys;
+                    md.dispi = 1;
+                    md.attr_vga = 1;
+                    md.hzmask = 1;
+                    if (md.bpp == 16) { md.rbits = md.bbits = 5; md.gbits = 6; md.rpos = 11; md.gpos = 5; }
+                    if (md.bpp >= 24) { md.rbits = md.gbits = md.bbits = 8; md.rpos = 16; md.gpos = 8; }
+                    dx->modes[dx->nmodes++] = md;
+                    dbg(" mode DISPI %ux%ux%u\n", w, h, md.bpp);
+                }
+            }
+        }
+    }
     /* 15 bpp only where there is no 16 bpp mode of the same size */
     for (i = 0; i < dx->nmodes; i++) {
         ULONG j;
@@ -836,35 +1043,63 @@ static void gather(DEVEXT *dx)
         dx->nmodes = 1;
         dbg("VGA replacement: VGA 640x480x4\n");
     } else
-    /* the VGA.SYS replacement offers 800x600, else 640x480, in 64K colours
-       (32K when there is no 16 bpp mode), linear frame buffer, BIOS
-       refresh rate: a mode FRAMEBUF.DLL of Windows draws in, and one that
-       every VBE BIOS sets correctly (the native resolution of the monitor
-       is not always a well made BIOS mode) */
+    /* the VGA.SYS replacement offers one linear frame buffer mode at the
+       BIOS refresh rate that FRAMEBUF.DLL draws in. The order is the
+       preference: the native resolution of the monitor (EDID) in 32 bpp
+       first, then 800x600 in 32 bpp, then 640x480 in 16 bpp; when the BIOS
+       has none of them, the VGA fallback below (320x200) still starts
+       Windows. 24 bpp stands in for a missing 32 bpp mode, 15 bpp for a
+       missing 16 bpp one. */
     {
-        USHORT want[2][3];
+        USHORT want[3][3];
         MODE keep[2];
         ULONG nw = 0, nk = 0, k, j;
-        want[nw][0] = 800; want[nw][1] = 600; want[nw][2] = 16; nw++;
+        if (dx->edid_ok && dx->edid_w >= 640 && dx->edid_h >= 480 &&
+            !(dx->edid_w == 800 && dx->edid_h == 600)) {
+            want[nw][0] = dx->edid_w; want[nw][1] = dx->edid_h; want[nw][2] = 32; nw++;
+        }
+        want[nw][0] = 800; want[nw][1] = 600; want[nw][2] = 32; nw++;
         want[nw][0] = 640; want[nw][1] = 480; want[nw][2] = 16; nw++;
-        for (k = 0; k < nw; k++) {
+        for (k = 0; k < nw && nk == 0; k++) {
             int best = -1;
             for (j = 0; j < dx->nmodes; j++) {
                 MODE *m = &dx->modes[j];
                 if (m->banked || m->w != want[k][0] || m->h != want[k][1]) continue;
-                if (m->bpp == 16 || (m->bpp == 15 && best < 0)) best = (int)j;
+                if (want[k][2] == 32) {
+                    if (m->bpp == 32) { best = (int)j; break; }
+                    if (m->bpp == 24 && best < 0) best = (int)j;
+                } else {
+                    if (m->bpp == 16) { best = (int)j; break; }
+                    if (m->bpp == 15 && best < 0) best = (int)j;
+                }
             }
             if (best >= 0) {
-                for (j = 0; j < nk; j++)
-                    if (keep[j].w == dx->modes[best].w && keep[j].h == dx->modes[best].h && keep[j].bpp == dx->modes[best].bpp) break;
-                if (j == nk) { keep[nk] = dx->modes[best]; keep[nk].hzmask = 1; nk++; }
+                keep[0] = dx->modes[best]; keep[0].hzmask = 1; nk = 1;
+                dbg("VGA replacement: choice %u, %ux%ux%u\n", k, keep[0].w, keep[0].h, keep[0].bpp);
             }
         }
-        /* only the best one is offered, so that Windows cannot fall back
-           to a different mode from an older registry setting (the
-           hardware profile of a fresh Windows 2000/XP asks for 640x480
-           in 16 colours); more modes need the full WINVBE driver */
-        if (nk > 1) nk = 1;
+        /* UEFI: a VBE shim (OVMF, CSM-less firmware) has no VGA behind it,
+           so the 320x200 fallback would show nothing. Such firmware lists
+           only the pre-set GOP mode, or reports a linear graphics mode as
+           the current one (4F03; a real VBE BIOS still is in text mode 3
+           here): use that mode as it is. A real VBE BIOS without any of the
+           modes above goes to the VGA fallback. */
+        if (nk == 0) {
+            LONG pick = -1;
+            memset(&r, 0, sizeof(r)); r.eax = 0x4F03;
+            if (int10(dx, &r, 0, 0, 0) && (USHORT)r.eax == 0x004F)
+                for (j = 0; j < dx->nmodes; j++)
+                    if (!dx->modes[j].dispi && (dx->modes[j].vbe & 0x1FF) == ((USHORT)r.ebx & 0x1FF)) { pick = (LONG)j; break; }
+            if (pick < 0 && dx->nmodes == 1) pick = 0;
+            if (pick >= 0 && !dx->modes[pick].banked && dx->modes[pick].bpp >= 8) {
+                keep[0] = dx->modes[pick]; keep[0].hzmask = 1; nk = 1;
+                dbg("VGA replacement: firmware mode %x %ux%ux%u\n", keep[0].vbe, keep[0].w, keep[0].h, keep[0].bpp);
+            }
+        }
+        /* only the one mode is offered, so Windows cannot fall back to a
+           different mode from an older registry setting (a fresh Windows
+           2000/XP hardware profile asks for 640x480 in 16 colours); more
+           modes need the full WINVBE driver */
 #ifdef TESTPITCH
         if (nk) keep[0].pitch += TESTPITCH;     /* test: a mode list line length the BIOS does not set */
 #endif
@@ -911,6 +1146,7 @@ fallback:
         memcpy(f->oem, dx->oem, sizeof(f->oem));
         f->edid_ok = (UCHAR)dx->edid_ok;
         memcpy(f->edid, dx->edid, 128);
+        f->natw = dx->edid_w; f->nath = dx->edid_h; f->nathz = dx->edid_hz;
         memcpy(f->patch, dx->patchres, sizeof(f->patch));
         f->nmodes = dx->nmodes;
         for (i = 0; i < dx->nmodes; i++) {
@@ -976,7 +1212,7 @@ static int dispi_mode(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
 {
     MODE *md = &dx->modes[idx];
     USHORT id = dispi_rd(0);
-    if (md->banked || id < 0xB0C0 || id > 0xB0C5) return 0;
+    if (md->banked || id < 0xB0C0 || id > 0xB0CF) return 0;
     dispi_wr(4, 0);
     dispi_wr(1, md->w);
     dispi_wr(2, md->h);
@@ -1002,7 +1238,15 @@ static int dispi_mode(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
 
 static int set_mode(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
 {
+    if (dx->modes[idx].dispi)                   /* a size the BIOS does not list */
+        return dispi_mode(dx, idx, hzi, noclear);
     if (!set_mode1(dx, idx, hzi, noclear)) {
+#ifdef _X86_
+        /* the mode set of a BIOS that fails in virtual 8086 mode */
+        if (!dx->use_emu && dx->int10_mode == 0 && emu_start(dx, "mode set failed in V86 mode")) {
+            if (set_mode1(dx, idx, hzi, noclear)) { dx->reposted = 0; return 1; }
+        }
+#endif
         /* after stand by the video BIOS may need its initialization
            (the system BIOS does not always run it again) */
         if (!dx->reposted) {
@@ -1044,7 +1288,7 @@ static int set_mode1(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
     if (hzi < WVB_NHZ && dx->vbever >= 0x300) {
 #endif
         CRTC c;
-        fill_crtc(dx, &c, md, wvb_hz[hzi]);
+        if (!fill_crtc(dx, &c, md, wvb_hz[hzi])) goto no_crtc;
         memset(&r, 0, sizeof(r));
         r.eax = 0x4F0B; r.ebx = 0; r.ecx = c.pclk; r.edx = md->vbe;
         if (int10(dx, &r, 0, 0, 0) && (USHORT)r.eax == 0x004F && r.ecx) {
@@ -1059,14 +1303,30 @@ static int set_mode1(DEVEXT *dx, ULONG idx, ULONG hzi, int noclear)
                 c.htotal, c.vtotal, c.pclk, c.refresh);
         }
     }
+no_crtc:
     if (!done) {
         memset(&r, 0, sizeof(r));
         r.eax = 0x4F02; r.ebx = md->vbe | lin | (noclear ? 0x8000 : 0);
         if (!int10(dx, &r, 0, 0, 0) || (USHORT)r.eax != 0x004F) {
-            dbg("set %x failed ax=%x\n", md->vbe, r.eax);
-            return 0;
+            /* UEFI: OVMF and some firmwares expose the GOP-initialised linear
+               framebuffer through a minimal VBE shim that reports one mode and
+               cannot set a mode (4F02 fails).  If the current mode (4F03) is
+               already the one we want, the framebuffer is live - use it as it
+               is instead of failing, so WINVBE runs on a pure-UEFI machine. */
+            memset(&r, 0, sizeof(r));
+            r.eax = 0x4F03;
+            if (int10(dx, &r, 0, 0, 0) && (USHORT)r.eax == 0x004F &&
+                ((USHORT)r.ebx & 0x01FF) == (md->vbe & 0x01FF)) {
+                dx->uefi_fb = 1;
+                dbg("set %x: already current (UEFI framebuffer, no 4F02)\n", md->vbe);
+            } else {
+                dbg("set %x failed ax=%x\n", md->vbe, r.eax);
+                return 0;
+            }
+        } else {
+            dx->uefi_fb = 0;
+            dbg("set %x %ux%ux%u\n", md->vbe, md->w, md->h, md->bpp);
         }
-        dbg("set %x %ux%ux%u\n", md->vbe, md->w, md->h, md->bpp);
     }
     dx->cur_pitch = md->pitch;
     memset(&r, 0, sizeof(r));
@@ -1661,6 +1921,7 @@ static VP_STATUS NTAPI FindAdapter(PVOID hw, PVOID ctx, PWSTR arg, PVIDEO_PORT_C
     dx->dac8 = reg_dword(dx, WVB_REG_DAC8, 1);
     dx->refpol = reg_dword(dx, WVB_REG_REFRESH, 0);
     dx->access = reg_dword(dx, WVB_REG_ACCESS, 0);
+    dx->int10_mode = reg_dword(dx, WVB_REG_INT10, 0);
 #ifdef TEST_ACCESS
     dx->access = TEST_ACCESS;
 #endif
@@ -1769,6 +2030,9 @@ static int rm_write(DEVEXT *dx, USHORT seg, USHORT off, const void *src, ULONG l
 {
     ULONG lin = ((ULONG)seg << 4) + off;
     if (lin + len > 0xA0000) return 0;
+#ifdef _X86_
+    if (dx->use_emu) return emu_write(dx->emu, lin, src, len);
+#endif
     if (dx->have_i10)
         return dx->i10.Int10WriteMemory(dx->i10.Context, seg, off, (PVOID)src, len) == NO_ERROR;
 #ifdef _X86_
@@ -1798,6 +2062,20 @@ static void repost(DEVEXT *dx)
     UCHAR hdr[3] = { 0, 0, 0 };
     RM r;
     if (dx->rom) memcpy(hdr, dx->rom, 3);
+#ifdef _X86_
+    if (dx->use_emu) {                  /* the emulator calls C000:0003 itself */
+        EMUREGS e;
+        if (hdr[0] != 0x55 || hdr[1] != 0xAA) return;
+        memset(&e, 0, sizeof(e));
+        e.eax = 0x0010;                 /* AH = bus 0, AL = device 2 function 0 (onboard graphics) */
+        emu_call(dx->emu, 0xC000, 0x0003, &e);
+        memset(&r, 0, sizeof(r));
+        r.eax = 0x4F03;
+        int10(dx, &r, 0, 0, 0);
+        dbg("repost (emulator): 4F03 ax=%x\n", r.eax);
+        return;
+    }
+#endif
     if (!rm_read(dx, 0, 0x40, &oldvec, 4)) return;
     dbg("repost: int10 %x rom %x %x size %u\n", oldvec, hdr[0], hdr[1], hdr[2]);
     if (hdr[0] != 0x55 || hdr[1] != 0xAA) return;

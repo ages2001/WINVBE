@@ -6,22 +6,23 @@ WINVBE is a universal display driver that drives the graphics card through
 its **VESA BIOS Extensions (VBE)** instead of card-specific code, in the
 spirit of VBEMP and VBESVGA. The same package runs Windows 1.0x, 2.x, 3.0,
 3.1, Windows for Workgroups, Windows 95/98/ME and the Windows NT family up to
-XP and Server 2003 x64, at resolutions up to 4096x4096 and colour depths up
-to 32 bit. It works with any card that has a VBE BIOS, from an S3 Trio to a
+XP and Server 2003 x64, at resolutions up to 8K (7680x4320) and ultrawide
+32:9 and colour depths up to 32 bit. It works with any card that has a VBE BIOS, from an S3 Trio to a
 GeForce or Radeon booted with CSM, and with the virtual cards of QEMU, Bochs,
 VirtualBox and VMware.
 
-![WINVBE 1.2 on Windows 1.01, 2.03, 3.0, 3.1, 95, 98 SE, ME, NT 3.1, NT 3.51, NT 4.0, 2000, XP, XP x64 and the DOS installer](docs/images/overview.png)
+![WINVBE 1.3 on Windows 1.01, 2.03, 3.0, 3.1, 95, 98 SE, ME, NT 3.1, NT 3.51, NT 4.0, 2000, XP, XP x64 and the DOS installer](docs/images/overview.png)
 
 ![Windows 1.0 - XP x64](https://img.shields.io/badge/Windows-1.01%20%E2%80%93%20XP%20x64-0078D6)
 ![VBE 1.2 / 2.0 / 3.0](https://img.shields.io/badge/VBE-1.2%20%7C%202.0%20%7C%203.0-555)
-![Version 1.2](https://img.shields.io/badge/version-1.2-2ea44f)
+![Version 1.3](https://img.shields.io/badge/version-1.3-2ea44f)
 ![License GPLv3](https://img.shields.io/badge/license-GPLv3-blue)
 
 ---
 
 ## Contents
 
+- [What's new in 1.3](#whats-new-in-13)
 - [What's new in 1.2](#whats-new-in-12)
 - [Highlights](#highlights)
 - [Supported systems](#supported-systems)
@@ -45,6 +46,78 @@ VirtualBox and VMware.
 - [Testing](#testing)
 - [Changelog](#changelog)
 - [License](#license)
+
+## What's new in 1.3
+
+- **Intel graphics of Skylake (6th generation) and later on Windows NT.**
+  Their video BIOS reaches its registers in "unreal" mode, which cannot run
+  in the virtual 8086 mode where Windows NT 3.x - XP/2003 (x86) run the
+  BIOS: Windows 2000 stops with 0x0000000A. The NT miniport now carries an
+  x86 emulator (libx86emu, as Linux runs such BIOSes in x86emu and 64-bit
+  Windows always does): the first BIOS calls go through it, and a BIOS
+  that uses privileged instructions there - or Intel graphics of Skylake
+  and later - stays in it (`WinVbe.Int10`, WINVBECF *Features* -
+  *Video BIOS calls*). Verified with a Skylake look-alike in QEMU
+  (`tools/skl-vga`) on Windows 2000 and NT 3.1.
+- **The same for Windows 3.x (386 enhanced mode) and 95/98/ME.** These run
+  the video BIOS in virtual 8086 mode too: `WINVBE.386` now carries the
+  emulator and runs the system VM's INT 10h in it - the driver's VBE calls,
+  and the BIOS calls of Windows itself. Verified on Windows 3.0 and 3.1
+  (386 enhanced mode) and Windows 98 SE with the look-alike's unreal-mode
+  BIOS, where Windows 98 did not start before. DOS, Windows 1.x/2.x and
+  Windows 3.x in real or standard mode call the BIOS in real mode, where
+  such a BIOS works as it is (verified: Windows 2.03, Windows 3.1 standard
+  mode).
+- **Scrolling on real graphics cards.** Native scrolling (Notepad, WordPad,
+  Explorer) copies the screen to itself, reading video memory, which is
+  uncached and slow on real cards. The shadow buffer keeps a copy in system
+  memory, so scrolling only writes the card: measured 64 s -> 19 s on
+  Windows 2000 and 85 s -> 19 s on Windows 98 (300 scrolls, `SCROLLB.EXE`),
+  as fast as a program that copies its own buffer. It is on by default; the
+  Windows 3.x/9x WINVBECF now has the option too (*Colors* - *Shadow
+  buffer*).
+- **Resolutions beyond 4096 pixels: ultrawide and 8K**
+  ([issue #7](https://github.com/ages2001/WINVBE/issues/7)). The 4096x4096
+  limit is gone: 21:9 and 32:9 monitors (3440x1440, 3840x1600, 5120x1440,
+  5120x2160), 5K and 8K (7680x4320) work wherever the card offers the mode
+  (its VBE BIOS list, or any size on QEMU, Bochs and VirtualBox). Monitors
+  wider or taller than 4095 pixels report their native size in an EDID
+  extension block, so WINVBE now reads those too (DisplayID Type I/VII
+  timings and the CTA-861 VICs for 5120x2160, 7680x4320 and 10240x4320).
+  The Windows NT driver now also offers sizes the BIOS does not list on
+  emulator cards, and OpenGL renders windows up to 8192x8192. Verified at
+  7680x4320 in 32-bit colour on Windows 98 SE and Windows 2000.
+- **OpenGL is automatic on Windows NT 3.1.** Installing the driver with
+  WINVBECF now also installs the OpenGL runtime (`OPENGL32.DLL` and the ICD)
+  and adds the five OpenGL functions NT 3.1's `GDI32.DLL` lacks
+  (`ChoosePixelFormat`, `DescribePixelFormat`, `GetPixelFormat`,
+  `SetPixelFormat`, `SwapBuffers`) to `GDI32.DLL` itself. After the restart
+  every OpenGL program runs - the separate `GL31PAT` step per program is no
+  longer needed. (The standalone tool `GL31SYS.EXE` does the same by hand, and
+  `GL31SYS /U` undoes it.)
+- **Per-vendor Plug and Play matches on Windows 2000/XP/2003.** The INF now
+  matches Intel, AMD/ATI, nVidia and S3 display adapters by vendor
+  (`PCI\VEN_xxxx&CC_0300`) above the generic class-code match, so WINVBE is
+  chosen in preference to a vendor driver that only falls back to VGA, and the
+  class-code match covers 3D controllers (`CC_0380`) as well.
+- **`INSTALL /NOFONTS`**: install only the display driver and keep the fonts
+  Windows already uses - for non-English Windows 3.x, which would otherwise ask
+  for its font disks. The interactive setup asks too.
+- **VGA.SYS replacement comes up at the monitor's native resolution in
+  32-bit colour.** The non-PnP VGA.SYS replacement now prefers the native
+  resolution of the monitor (EDID) in 32-bit colour, then 800x600x32, then
+  640x480x16, then the VGA fallback.
+- **A standalone OpenGL package** (version 1.0): *WINVBE OpenGL for Windows
+  NT 3.x*, the full OpenGL 2.1 runtime for NT 3.1 / 3.5 / 3.51 with its own
+  README and changelog, for use without the rest of WINVBE.
+- **UEFI framebuffer support**: on a UEFI machine whose firmware exposes the
+  GOP framebuffer through a VBE shim (OVMF and others), WINVBE uses the live
+  pre-set framebuffer instead of failing when the firmware cannot change the
+  mode.
+- Test programs write their logs with CR/LF line endings (GitHub #4), and the
+  VBE 3.0 refresh-rate control was confirmed to drive the real CRTC timing and
+  pixel clock - a genuine refresh change, nominal only where the VM has no real
+  display (GitHub #13-related).
 
 ## What's new in 1.2
 
@@ -104,8 +177,8 @@ VirtualBox and VMware.
 - Windows 3.x standard mode under JEMM386, JEMMEX, HIMEMX, QEMM, UMBPCI and
   EMM386 ([issue #2](https://github.com/ages2001/WINVBE/issues/2)).
 - **NONPNP**: a stand-alone replacement for Windows NT's `VGA.SYS` that
-  starts Windows NT 4.0, 2000 and XP (x86 and x64) in 800x600 with 64K
-  colours with Windows' own frame buffer driver, for PCs whose standard
+  starts Windows NT 4.0, 2000 and XP (x86 and x64) at the monitor's native
+  resolution in 32-bit colour with Windows' own frame buffer driver, for PCs whose standard
   VGA does not work. See
   [NONPNP](#nonpnp-vgasys-replacement-for-windows-nt).
 - Tested on more systems: Windows ME, NT 3.51, NT 4.0, XP, 2000 on an AHCI
@@ -132,7 +205,8 @@ Details are in the [changelog](#changelog).
   HAL (YUV surfaces, overlay, page flipping) and changes of resolution and
   colour depth from Display Properties.
 - **A VGA.SYS that needs no VGA** (NONPNP): Windows NT 4.0, 2000 and XP
-  start in 800x600 with 64K colours even before WINVBE is installed.
+  start at the monitor's native resolution in 32-bit colour even before
+  WINVBE is installed.
 - **Fast on modern cards.** A shadow frame buffer in system memory (Windows
   3.x) removes the very slow PCIe reads from video memory, and write
   combining (PAT or MTRR, set up by `WINVBE.386`) sends frame buffer
@@ -173,7 +247,8 @@ Details are in the [changelog](#changelog).
 | 3.1, WfW 3.1/3.11 | `WIN31\WINVBE.DRV` + `WINVBE.386` | `INSTALL.EXE`, Setup, or WINVBECF |
 | 95, 98, ME | `WIN9X\WINVBE.DRV` + `WINVBE.386` | Device Manager → *Have Disk* |
 | NT 3.1, 3.5, 3.51 | `NT\I386\NT3X` miniport + CSRSS display DLL | WINVBECF, or OEMSETUP.INF |
-| NT 4.0, 2000, XP, Server 2003 | `NT\I386\NT4-XP` | WINVBECF, *Have Disk*, Device Manager |
+| NT 4.0 (not Plug and Play) | `NT\I386\NT4` | WINVBECF, *Have Disk* (Display Type) |
+| 2000, XP, Server 2003 (Plug and Play) | `NT\I386\2KXP` | Device Manager → *Have Disk* |
 | XP x64, Server 2003 x64 | `NT\AMD64` | WINVBECF, Device Manager |
 | NT 3.1 - XP/2003, x86 and x64 | `NONPNP\I386`, `NONPNP\AMD64`: `VGA.SYS` replacement (not WINVBE) | copy over `VGA.SYS` |
 
@@ -218,9 +293,11 @@ NT\I386\NT3X\    NT 3.1, 3.5, 3.51: WINVBE.SYS, WINVBE.DLL, WINVBECF.EXE,
                  OEMSETUP.INF; GL\ OPENGL32.DLL (full OpenGL 2.1 for
                  programs on NT 3.1/3.5x), and for NT 3.1 WVGDI.DLL +
                  GL31PAT.EXE + README.TXT
-NT\I386\NT4-XP\  NT 4.0, 2000, XP, Server 2003: WINVBE.SYS, WINVBE.DLL,
+NT\I386\NT4\     NT 4.0 (not Plug and Play): WINVBE.SYS, WINVBE.DLL,
                  WINVBECF.EXE, WVBGL32.DLL (OpenGL ICD, with WVBGLS.DLL
-                 and WVBGLX.DLL), WINVBE.INF
+                 and WVBGLX.DLL), WINVBE.INF (Display Type / Have Disk)
+NT\I386\2KXP\  2000, XP, Server 2003 (Plug and Play): the same files,
+                 WINVBE.INF with per-vendor PCI matches (Intel, AMD, nVidia, S3)
 NT\AMD64\        XP / Server 2003 x64: the same files, 64 bit; WVBGL32.DLL
                  is the 64-bit OpenGL ICD, WVBGL32W.DLL the 32-bit one
                  (installed as SysWOW64\WVBGL32.DLL, with WVBGLS.DLL and
@@ -240,15 +317,15 @@ the standard Windows bitmaps, cursors and icons inside the drivers.
 
 ## Installation
 
-Download the release archive and copy the `WINVBE12` folder to the hard
-disk, e.g. `C:\WINVBE12`.
+Download the release archive and copy the `WINVBE13` folder to the hard
+disk, e.g. `C:\WINVBE13`.
 
 ### Windows 1.x, 2.x, 3.0, 3.1 and Windows for Workgroups: DOS installer
 
 Exit Windows and run
 
 ```
-C:\WINVBE12\INSTALL
+C:\WINVBE13\INSTALL
 ```
 
 INSTALL looks for Windows in the folders of the hard disks (one level, e.g.
@@ -314,7 +391,7 @@ press OK. The files are copied and Windows restarts.
 - **Windows 3.1:** run `SETUP` from DOS in the Windows directory, or
   Windows Setup (Main > Windows Setup > Options > Change System Settings).
   Display → *Other display (Requires disk from OEM)*, path: the WIN31
-  folder (e.g. `C:\WINVBE12\WIN31`). Choose a colour depth / font size.
+  folder (e.g. `C:\WINVBE13\WIN31`). Choose a colour depth / font size.
   All files Setup needs are in the folder; it installs `VDDVGA30.386` +
   `WVB30.3GR` (the VGA grabber pair for Windows 3.0 style display
   drivers). DOS Setup builds `WIN.COM` without the start-up logo.
@@ -329,7 +406,7 @@ press OK. The files are copied and Windows restarts.
 
 INSTALL is the easy way. To use Setup's *Other* display choice instead,
 run `SETUP` from the Windows 2.x Setup disk, choose *Other (requires disk
-provided by a hardware manufacturer)* and type `C:\WINVBE12\WIN2X` (the
+provided by a hardware manufacturer)* and type `C:\WINVBE13\WIN2X` (the
 folder holds `WINVBE.DRV`, `WINVBE.LGO` and the grabber `WINVBE.GRB`).
 Windows/386 Setup also wants `WINVBE.3EX` and `WINVBE.386` from your own
 Windows/386: run `PREP2X C:\WIN386` (or `PREP2X A:`) in the WIN2X folder.
@@ -372,7 +449,8 @@ Log on as Administrator and use the folder for your system:
 | Folder | Systems |
 |---|---|
 | `NT\I386\NT3X` | NT 3.1, 3.5, 3.51 |
-| `NT\I386\NT4-XP` | NT 4.0, 2000, XP, Server 2003 |
+| `NT\I386\NT4` | NT 4.0 (not Plug and Play) |
+| `NT\I386\2KXP` | 2000, XP, Server 2003 (Plug and Play) |
 | `NT\AMD64` | XP x64, Server 2003 x64 |
 
 - **All versions:** run `WINVBECF.EXE` from the folder, press **Install
@@ -384,7 +462,7 @@ Log on as Administrator and use the folder for your system:
   adapters > *Update Driver* > Install from a specific location > Don't
   search > *Have Disk* > the folder.
 - **NT 4.0:** alternatively Display > Settings > *Display Type* > *Change* >
-  *Have Disk* > `NT\I386\NT4-XP`.
+  *Have Disk* > `NT\I386\NT4`.
 - **NT 3.1:** alternatively Windows NT Setup > Options > *Change System
   Settings* > Display > *Other* > `NT\I386\NT3X` (OEMSETUP.INF), and choose
   a resolution. **NT 3.5/3.51:** Control Panel > Display > *Change Display
@@ -564,7 +642,8 @@ also be edited by hand.
 | `Scheme` | 0 | default system colours: 0 = by Windows version, 1 = Windows 3.0 sky blue, 2 = Windows 3.1 sky blue (cream workspace), 3 = classic navy; only for colours not set in `WIN.INI` `[colors]` |
 | `Dac8` | 1 | use the 8-bit DAC in 256-colour modes when available |
 | `DibEngine` | 1 | Windows 95/98/ME: DIB engine mode (see below); 0 = Windows 3.1-style driver |
-| `ShadowBuffer` | 1 | copy of the screen in system memory (386 enhanced mode; 9x only with `DibEngine=0`) |
+| `BiosEmu` | 0 | video BIOS calls in 386 enhanced mode and Windows 9x (`WINVBE.386`): 0 automatic - Intel graphics of Skylake and later, or a BIOS that runs privileged instructions in its first VBE call, use the x86 emulator; 1 virtual 8086 mode; 2 the emulator (WINVBECF *Colors* - *Video BIOS calls*) |
+| `ShadowBuffer` | 1 | copy of the screen in system memory (386 enhanced mode and Windows 9x, also with the DIB engine): scrolling and moving windows read it instead of the slow video memory; 0 = off (WINVBECF *Colors* - *Shadow buffer*); not used on VMware SVGA II |
 | `WriteCombining` | 1 | frame buffer write combining through `WINVBE.386` |
 | `VddMode` | auto | Windows 3.x full-screen DOS boxes: 1 = the VDD tells the driver to leave and set its mode (4001h/4002h); default 1 on real cards, 0 on Bochs/QEMU/VirtualBox/VMware |
 | `VgaReserve` | 1 | keep the first 256 KB of video memory (VGA text and font planes) free, so full-screen DOS boxes keep their font |
@@ -853,6 +932,7 @@ miniport: `Services\winvbe\Device0` on NT 3.x - 2000,
 | `WinVbe.Rotate` | 0, 90, 180, 270 (clockwise) |
 | `WinVbe.Scale` | 0 off, 1 small modes scaled with the aspect kept, 2 full screen |
 | `WinVbe.Shadow` | 0 automatic (real cards), 1 on, 2 off |
+| `WinVbe.Int10` | video BIOS calls (32-bit NT): 0 automatic - the first calls go through the x86 emulator, a BIOS that uses privileged instructions (or Intel graphics of Skylake and later) stays there, any other uses Windows' virtual 8086 mode; 1 Windows only; 2 the emulator always |
 | `WinVbe.Gamma`, `WinVbe.Brightness`, `WinVbe.Contrast` | 1/100 (100 = 1.0); -100 .. 100 stored + 1000; percent |
 | `WinVbe.Lut` | REG_BINARY 768: the red, green and blue tables WINVBECF makes from the three above |
 
@@ -874,7 +954,7 @@ Windows to draw with the frame buffer display driver Windows already has.
 
 | Windows | Mode | Windows' display driver |
 |---|---|---|
-| NT 4.0, 2000, XP, Server 2003 (x86) | 800x600, else 640x480, at 64K colours (32K without a 16-bit mode) | `FRAMEBUF.DLL` |
+| NT 4.0, 2000, XP, Server 2003 (x86) | the first the BIOS has: native resolution of the monitor (EDID) in 32-bit colour, 800x600 in 32-bit, 640x480 in 16-bit, else VGA 320x200 (24-bit stands in for 32-bit, 15-bit for 16-bit; on UEFI firmware without a CSM the mode the firmware set) | `FRAMEBUF.DLL` |
 | XP / Server 2003 x64 | the same (`NONPNP\AMD64`) | `FRAMEBUF.DLL` |
 | NT 3.1, 3.5, 3.51 | 640x480, 16 colours, as Microsoft's VGA.SYS | `VGA.DLL` |
 
@@ -1052,6 +1132,14 @@ WINVBE draws in software, and on a modern card the bus is the bottleneck.
 
 ## Known limitations
 
+- **Video BIOSes that need real mode under a V86 memory manager.** DOS,
+  Windows 1.x/2.x and Windows 3.x standard mode call the video BIOS in real
+  mode, where a BIOS using "unreal" mode (Intel graphics of Skylake and
+  later) works; under EMM386 or another V86 memory manager the processor is
+  in virtual 8086 mode and such a BIOS fails (there is no emulator outside
+  Windows NT and `WINVBE.386`). Use HIMEM.SYS (or XHIMEM) without EMM386
+  there. The emulator of `WINVBE.386` serves the system VM; a full-screen
+  MS-DOS box still calls the BIOS in V86 mode.
 - **No hardware 2D/3D acceleration** (except copies, fills and the
   pointer on VMware SVGA II). Direct3D and OpenGL run on the CPU: VBE has
   no 3D, and a VMware SVGA3D driver would be a project of its own.
@@ -1090,6 +1178,11 @@ WINVBE draws in software, and on a modern card the bus is the bottleneck.
   bitmaps whose width is a multiple of 2048 pixels or that are larger than
   about 16 MB, so programs that make a screen-sized bitmap can fail at
   2048x1536x32 and 2560x1600x32. Use 24 or 16 bpp there.
+- **Largest screen on Windows 3.x / 9x:** a scan line can have at most
+  32767 bytes (16-bit GDI), so 8191 pixels wide in 32 bpp (8K, 7680, fits),
+  10922 in 24 bpp and 16383 in 16 bpp; a screen-sized bitmap at 8K in 32 bpp
+  is beyond GDI's own bitmap limit above. The 8K desktop also needs about
+  130 MB of video memory and as much system memory for the shadow buffer.
 - **NONPNP (VGA.SYS replacement):** no full-screen MS-DOS or console
   windows, one mode only, and on NT 3.x only 640x480 in 16 colours.
 - **Windows NT:** the mouse pointer is drawn by Windows; WINVBE Mouse sets
@@ -1163,6 +1256,7 @@ DDTEST/D3DTEST need DirectX, NT 4.0 SP3 or later). Each writes a report
 | `DDGBL` | Windows 9x: what DirectDraw made of the display driver's HAL (flags, capabilities, video memory, heaps, callbacks) |
 | `DCITEST` | DCI primary surface (Windows 9x) |
 | `W32GDI [rounds]` | Win32 GDI drawing as applications do it (DIB sections, GetDIBits, image lists, icons, pens, regions, fonts, SetDIBits/GetDIBits round trips); `W32GDI.TXT` names the last step after a crash and ends with the number of failed checks |
+| `SCROLLB [/q]` | scrolling: `ScrollWindowEx` as editors do it, screen-to-screen and memory-to-screen `BitBlt`, 300 each in an 800x560 window (`SCROLLB.TXT`) |
 | `DBGRUN program.exe [args]` | runs a program under the Win32 debugger and logs its DLLs and exceptions (with the class and message of Delphi exceptions) to `DBGRUN.TXT` |
 
 `GDITEST.EXE` in the main folder is the 16-bit GDI test for Windows 3.x.
@@ -1394,6 +1488,195 @@ stress run.
 
 ## Changelog
 
+### v1.3
+
+**Windows NT (x86): video BIOS calls through an x86 emulator**
+- The miniport carries libx86emu: a video BIOS that cannot run in virtual
+  8086 mode (newer Intel graphics reach their registers in "unreal" mode;
+  Windows 2000 stops with 0x0000000A in the attempt) runs in the emulator,
+  as Linux (uvesafb/v86d, the X server's Int10 x86emu backend) and 64-bit
+  Windows do. The emulated machine has a private copy of conventional
+  memory (vectors, BIOS data area, EBDA), the real VGA memory and ROMs,
+  memory above 1 MB mapped on demand and the real I/O ports.
+- `WinVbe.Int10` 0 (automatic): the first calls (EDID, VBE information) go
+  through the emulator, where nothing can crash; a BIOS that runs privileged
+  instructions there (MOV CRn, LGDT/LIDT, RDMSR/WRMSR, protected mode), or
+  Intel graphics of Skylake and later (by PCI ID), stays in it; any other
+  BIOS goes back to Windows' calls. A failed VBE call or mode set in V86 mode
+  also switches. 1 = Windows only, 2 = always the emulator. WINVBECF:
+  *Features* - *Video BIOS calls*.
+- Verified in QEMU with `tools/skl-vga` (Intel 8086:1912 look-alike: 64-bit
+  BARs, frame buffer in the aperture BAR, registers through the I/O BAR, a
+  video BIOS using unreal mode): Windows 2000 and NT 3.1 start in
+  1024x768/800x600 with refresh rates, where the old miniport stopped with
+  0x0000000A; on the standard QEMU VGA the calls go back to V86 mode as before.
+- The emulator is built for the 386 (no RDTSC), and its imports exist in NT 3.1.
+
+**Windows 3.x (386 enhanced mode) and 95/98/ME: the x86 emulator in WINVBE.386**
+- `WINVBE.386` carries libx86emu (`vxd/emuvxd.c`; built with mingw as a
+  fixed-address image inside the VxD, `tools/pe2flat.py`) and runs the
+  system VM's V86 INT 10h in it: the VM's own memory below 1 MB + 64 KB (its
+  vectors, BIOS data, the caller's buffers and stack, VGA memory and ROMs as
+  mapped for it), memory above that mapped on demand, the real ports.
+- The emulation starts at the video BIOS's own INT 10h entry: the VM's
+  vector points to hooks of DOS/Windows in which the VMM has V86 break
+  points (ARPL, #UD in an emulator); their far calls and jumps are followed
+  to the ROM.
+- Automatic (`[WINVBE] BiosEmu=0`): Intel graphics of Skylake and later
+  (PCI 00:02.0) use the emulator from the start; otherwise the first VBE call
+  runs in it and a BIOS without privileged instructions goes back to V86
+  mode. 1 = V86 mode, 2 = the emulator; WINVBECF *Colors* - *Video BIOS
+  calls*. The driver passes the setting with INT 2Fh AX=B57Fh BX=4.
+- `tools/mkvxd32.py` writes fixups that cross a page boundary (into both
+  pages, as LINK386 does).
+- Verified with `tools/skl-vga` (`unreal=on`): Windows 3.0 (1024x768x16),
+  3.1 (800x600x32) in 386 enhanced mode and Windows 98 SE (800x600x16, the
+  monitor's EDID read through DDC in the emulator) start; Windows 98 failed
+  to start before. Windows 2.03 and Windows 3.1 standard mode run such a
+  BIOS in real mode as they are. On the standard QEMU VGA the calls stay in
+  V86 mode.
+
+**All Windows: scrolling and the shadow buffer**
+- Measured with `SCROLLB.EXE` on the Skylake look-alike with slow video
+  memory reads (500 ns each): native scrolling (`ScrollWindowEx`) took 64 s
+  on Windows 2000 and 85 s on Windows 98 without the shadow buffer, 19 s
+  with it, the same as copying a program's own buffer to the screen.
+- Windows 3.x/9x WINVBECF: *Colors and Screen* has *Shadow buffer*
+  (Automatic / Off; `ShadowBuffer` in `[WINVBE]`).
+
+**EDID**
+- An extension block replaces the preferred timing of the base block only
+  when the base block has none or a DisplayID timing marked preferred is
+  larger: a CTA-861 block lists supported formats, not the preferred one
+  (QEMU lists 5120x2160 first, which became the "native" size).
+
+**All Windows: resolutions beyond 4096 pixels (GitHub #7)**
+- The 4096x4096 limit is lifted. Windows 3.x/9x take up to 16384 pixels per
+  side, limited by a 32767-byte scan line (8K in 32 bpp fits); Windows NT
+  takes any size the card offers.
+- EDID extension blocks are read (up to three): DisplayID 1.x Type I and
+  DisplayID 2.x Type VII detailed timings and the preferred CTA-861 VIC when
+  it is wider than 4095 pixels, so ultrawide 32:9 and 8K monitors report
+  their native size. The exact timing is used for the native refresh rate.
+- QEMU / Bochs / VirtualBox (DISPI): the largest size the adapter takes is
+  read (GETCAPS); Windows NT now offers the monitor's native size and the
+  common large sizes (2560x1080 up to 7680x4320) beyond the BIOS mode list,
+  as the Windows 9x driver already did.
+- Fixed a 32-bit overflow in the CVT timing calculation for screens wider
+  than 4294 pixels (wrong pixel clock when a refresh rate was chosen).
+- Mode lists (Windows 9x INF and DirectDraw, NT 3.x OEMSETUP.INF) include
+  2560x1080, 3440x1440, 3840x1080, 3840x1600, 4096x2160, 5120x1440,
+  5120x2160, 5120x2880, 7680x2160 and 7680x4320; WINVBECF's custom size
+  goes up to 16384x16384 and lists the monitor's native size on emulators.
+- OpenGL (Mesa) renders windows up to 8192x8192 (was 4096).
+- Windows 1.x/2.x (real mode, VGA window only) keep the base EDID block and
+  leave the extension parsing out: their code segment stays below 64 KB.
+- Verified: Windows 98 SE and Windows 2000 at 7680x4320 in 32-bit colour,
+  Windows 3.1 at 5120x2160, XP x64 offering 7680x4320; Windows 1.x, 2.03,
+  3.0, NT 3.1 and NT 4.0 start as before (QEMU). The EDID extension parser
+  has a host test (`hosttest/edidxtest.c`: DisplayID Type I/VII, CTA VICs,
+  CTA blocks without data blocks).
+
+**Windows NT 3.1**
+- **Fixed: WINVBECF.EXE would not start on NT 3.1** (*"the procedure entry point
+  EnumDisplaySettingsA could not be located in USER32.dll"*), which blocked the
+  whole NT 3.1 install. `EnumDisplaySettingsA` (NT 3.5+) is now loaded at run
+  time instead of imported statically. Verified: WINVBECF installs WINVBE on
+  NT 3.1, the desktop comes up at 800x600, and *Introducing Windows NT*
+  (`INTRO.EXE`, Accent DemoMaker) plays its animated topics without freezing.
+- **OpenGL is enabled automatically at install.** WINVBECF's *Install driver*
+  on NT 3.1 copies `OPENGL32.DLL` and the ICD (`WVBGL32.DLL`, `WVBGLX.DLL`)
+  into `SYSTEM32` and runs `GL31SYS.EXE` to add `ChoosePixelFormat`,
+  `DescribePixelFormat`, `GetPixelFormat`, `SetPixelFormat` and `SwapBuffers`
+  to `GDI32.DLL` as forwarders to `OPENGL32`, fixing the PE checksum and
+  swapping the live file aside. After the reboot every OpenGL program runs with
+  no per-program `GL31PAT` step.
+- `GL31SYS.EXE` added (NT 3.1 system-wide OpenGL enabler, `/U` to undo,
+  `/Q` quiet for the installer).
+
+**Windows NT 4.0 vs 2000 / XP / 2003 (split)**
+- The NT 4.0 - XP folder is now **two** folders: `NT\I386\NT4` (Windows NT 4.0,
+  which is not Plug and Play - installed from the Display Type / Have Disk
+  dialog, one generic adapter name) and `NT\I386\2KXP` (Windows 2000, XP and
+  Server 2003, Plug and Play). The miniport already registers as a PnP miniport
+  on 2000+ and as a non-PnP miniport on NT 4.0 automatically; the split gives
+  each the INF that suits it.
+- The 2000/XP/2003 INF matches Intel (`VEN_8086`), AMD/ATI (`VEN_1002`), nVidia
+  (`VEN_10DE`) and S3 (`VEN_5333`) display adapters by `PCI\VEN_xxxx&CC_0300`,
+  ranked above the bare class-code match, so WINVBE binds in preference to a
+  vendor driver that only puts the adapter into VGA fall-back. The class-code
+  match now also covers 3D controllers (`PCI\CC_0380`). Verified on Windows
+  2000: the adapter binds as *WINVBE Universal VESA/VGA/SVGA* and Display
+  Properties changes resolution and colour depth (256 / 16 / 24 / 32-bit).
+
+**VGA.SYS replacement (non-PnP, NT 2000 - XP/2003)**
+- Default mode preference: the native resolution of the monitor (EDID) in
+  32-bit colour, then 800x600x32, then 640x480x16, then the VGA fallback
+  (it used to settle for 800x600 in 16-bit colour). Verified on Windows 2000:
+  1280x800x32 with EDID, 800x600x32 without EDID, 640x480x16 with 1 MB of
+  video memory.
+- UEFI without a CSM: when none of those modes exists, the mode the firmware
+  already set (VBE 4F03, or the only mode a VBE shim lists) is used instead of
+  the VGA fallback, which has no VGA behind it there.
+
+**Windows 95 / 98 / ME**
+- The INF matches Intel, AMD/ATI, nVidia and S3 display adapters by
+  `PCI\VEN_xxxx&CC_0300` above the bare class-code match (and now covers 3D
+  controllers, `PCI\CC_0380`), the same per-vendor preference as the NT INF.
+- **Fixed the 1.2 drawing-speed regression** (GitHub #5: moving a window with
+  content became as slow as 1.0, where 1.1 was fast). The DIB engine in 1.2
+  drew straight into the frame buffer, so a screen-to-screen blit (dragging a
+  window) read the *uncached* frame buffer, which is very slow. The DIB engine
+  now draws into the cached shadow buffer and flushes each drawn rectangle to
+  the frame buffer (the rectangles it reports around every screen access), so
+  reads come from fast system memory - the 1.1 arrangement, kept together with
+  the DIB engine. Verified on Windows 98: clean boot, correct redraw, and
+  windows move without tearing. The DirectDraw HAL steps aside while the shadow
+  is on (as it already did); `ShadowBuffer=0` in `[WINVBE]` turns the shadow
+  off and restores the DirectDraw HAL with 1.2's direct drawing.
+- **Fixed a boot crash** (`exception 0E ... in VxD`, a blue screen during
+  start-up). `WINVBE.386` sent a screen-switch notification (`WVB_NOTIFY`
+  through a nested V86 `INT 2Fh`) as soon as the system VM took the focus -
+  which, on a fast boot, happened before the display driver had hooked
+  `INT 2Fh`, and the nested execution faulted. The driver now tells the VxD
+  when it is ready (`INT 2Fh AX=B57Fh BX=2/3`), and the VxD holds every
+  notification until then. Reproduced reliably on Windows 98 and confirmed
+  fixed across repeated boots.
+- The DIB engine is also kept from drawing through a frame-buffer selector that
+  is not set over the current frame buffer (allocation or re-base failed, or
+  the frame buffer moved) - the surface is marked busy until the selector is
+  valid, to rule out a wild write as a cause of rare crashes.
+
+**Windows 1.x / 2.x / 3.x**
+- `INSTALL /NOFONTS` (and an interactive *keep the current Windows fonts*
+  option) installs only the display driver and leaves `[boot]` `fonts.fon`,
+  `fixedfon.fon` and `oemfonts.fon` untouched, so a non-English Windows is not
+  asked for its font disks.
+
+**UEFI**
+- WINVBE now uses a **pre-initialised (UEFI/GOP) linear framebuffer** when the
+  firmware cannot set a mode. On a UEFI machine the firmware (OVMF, and real
+  firmwares that ship a VBE shim) exposes the GOP framebuffer as a single VBE
+  mode but rejects `4F02` set-mode; WINVBE now checks the current mode (`4F03`)
+  and, when it already is the one wanted, uses the live framebuffer instead of
+  failing. The non-PnP `VGA.SYS` replacement likewise uses that single linear
+  mode rather than dropping to 320x200. On a legacy BIOS (or UEFI with CSM)
+  nothing changes - `4F02` succeeds and the new path is never taken. (Old
+  Windows that cannot itself boot pure UEFI still needs CSM or a UEFI VBE shim;
+  the driver no longer gets in the way when one is present.)
+
+**OpenGL**
+- Released *WINVBE OpenGL for Windows NT 3.x* as a standalone package
+  (version 1.0): the full OpenGL 2.1 runtime for NT 3.1 / 3.5 / 3.51 with its
+  own README and changelog.
+
+**Tests and tooling**
+- Test programs write their logs with CR/LF line endings (GitHub #4).
+- Confirmed the VBE 3.0 refresh-rate control drives the real CRTC timing and
+  pixel clock (`4F0B`/`4F02` with the CRTCInfo block), not a nominal value -
+  it is nominal only where the virtual machine has no real display.
+- Version resources updated to 1.3.
+
 ### v1.2
 
 **Windows 95/98/ME**
@@ -1601,6 +1884,9 @@ WINVBE is free software, licensed under the
 [GNU General Public License v3](LICENSE). The OpenGL renderers (`WVBGLS.DLL`,
 `WVBGLX.DLL`, and the x64 `WVBGL32.DLL`) contain Mesa
 7.8.2, which is under the MIT license (`MESA.TXT`, Copyright (C) 1999-2008
-Brian Paul and the Mesa contributors). The Microsoft files in the
+Brian Paul and the Mesa contributors). The 32-bit Windows NT miniport
+(`WINVBE.SYS`, `VGA.SYS`) and `WINVBE.386` contain libx86emu, under an MIT/X11 style
+license (`X86EMU.TXT`, Copyright (c) 1996-1999 SciTech Software, David
+Mosberger-Tang, 1999 Egbert Eich, 2007-2017 SUSE LINUX GmbH). The Microsoft files in the
 release package (see [Package contents](#package-contents)) are not part
 of WINVBE and not covered by this license.

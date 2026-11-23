@@ -1,0 +1,108 @@
+; WINVBE v1.3 - universal VESA/VGA/SVGA display driver
+; Windows NT 4.0 (x86)
+;
+; Windows NT 4.0 does not use Plug and Play for the display: install with
+; Control Panel > Display > Settings > Display Type > Change > Have Disk >
+; this folder, then choose "WINVBE Universal VESA/VGA/SVGA".
+
+[Version]
+Signature="$CHICAGO$"
+Provider=%WVB%
+ClassGUID={4D36E968-E325-11CE-BFC1-08002BE10318}
+Class=Display
+DriverVer=11/09/2026,1.3.0.0
+
+[DestinationDirs]
+DefaultDestDir   = 11
+winvbe.Miniport  = 12
+winvbe.Display   = 11
+winvbe.Tools     = 11
+winvbe.OpenGL    = 11
+
+[SourceDisksNames]
+1 = %Disk%,,,
+
+[SourceDisksFiles]
+winvbe.sys   = 1
+winvbe.dll   = 1
+winvbecf.exe = 1
+wvbgl32.dll  = 1
+wvbglx.dll   = 1
+wvbgls.dll   = 1
+
+[Manufacturer]
+%WVB% = WINVBE.Mfg
+
+[WINVBE.Mfg]
+%WVB.Desc% = winvbe, PCI\CC_0300
+%WVB.Desc% = winvbe, PCI\CC_0001
+
+[winvbe]
+CopyFiles = winvbe.Miniport, winvbe.Display, winvbe.Tools, winvbe.OpenGL
+AddReg = winvbe.Shortcuts, winvbe.OpenGLReg
+
+; OpenGL in software (Mesa) as the ICD of the display: the key (2000 and
+; later) and the value (NT 4.0)
+[winvbe.OpenGLReg]
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\WINVBE",Dll,,wvbgl32
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\WINVBE",DriverVersion,%REG_DWORD%,1
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\WINVBE",Flags,%REG_DWORD%,1
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers\WINVBE",Version,%REG_DWORD%,2
+HKLM,"Software\Microsoft\Windows NT\CurrentVersion\OpenGLDrivers",WINVBE,,wvbgl32.dll
+
+; at the next logon: the Start menu folder WINVBE (Display Settings, Mouse)
+[winvbe.Shortcuts]
+HKLM,"Software\Microsoft\Windows\CurrentVersion\RunOnce",WINVBESETUP,,"%11%\winvbecf.exe /SETUP"
+
+[winvbe.Miniport]
+winvbe.sys
+
+[winvbe.Display]
+winvbe.dll
+
+[winvbe.Tools]
+winvbecf.exe
+
+[winvbe.OpenGL]
+wvbgl32.dll
+wvbglx.dll
+wvbgls.dll
+
+[winvbe.SoftwareSettings]
+AddReg = winvbe_SoftwareDeviceSettings
+
+[winvbe_SoftwareDeviceSettings]
+HKR,, InstalledDisplayDrivers,      %REG_MULTI_SZ%, winvbe
+HKR,, VgaCompatible,                %REG_DWORD%,    0
+HKR,, DefaultSettings.BitsPerPel,   %REG_DWORD%,    16
+HKR,, DefaultSettings.XResolution,  %REG_DWORD%,    1024
+HKR,, DefaultSettings.YResolution,  %REG_DWORD%,    768
+HKR,, DefaultSettings.VRefresh,     %REG_DWORD%,    60
+
+[winvbe.GeneralConfigData]
+MaximumDeviceMemoryConfiguration = 128
+
+[winvbe.Services]
+AddService = winvbe, 0x00000002, winvbe_Service_Inst, winvbe_EventLog_Inst
+
+[winvbe_Service_Inst]
+ServiceType    = 1                  ; SERVICE_KERNEL_DRIVER
+StartType      = 1                  ; SERVICE_SYSTEM_START
+ErrorControl   = 0                  ; SERVICE_ERROR_IGNORE
+LoadOrderGroup = Video
+ServiceBinary  = %12%\winvbe.sys
+
+[winvbe_EventLog_Inst]
+AddReg = winvbe_EventLog_AddReg
+
+[winvbe_EventLog_AddReg]
+HKR,,EventMessageFile,0x00020000,"%SystemRoot%\System32\IoLogMsg.dll;%SystemRoot%\System32\drivers\winvbe.sys"
+HKR,,TypesSupported,0x00010001,7
+
+[Strings]
+WVB          = "WINVBE"
+WVB.Desc     = "WINVBE Universal VESA/VGA/SVGA"
+Disk         = "WINVBE v1.3 for Windows NT"
+REG_SZ       = 0x00000000
+REG_MULTI_SZ = 0x00010000
+REG_DWORD    = 0x00010001

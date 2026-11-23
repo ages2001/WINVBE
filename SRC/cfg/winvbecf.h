@@ -42,3 +42,5 @@
 #define IDC_CNOTE       248
 #define IDC_CROTATE     249
 #define IDC_CSCALE      250
+#define IDC_CSHADOW     251
+#define IDC_CBIOSEMU    252

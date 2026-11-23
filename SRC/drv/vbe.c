@@ -246,6 +246,43 @@ WORD vxd_wc(DWORD lin, DWORD size, DWORD phys)
     return r == 0xB57F ? 0 : r;
 }
 
+#ifndef OLDWIN
+/* WINVBE.386: how the video BIOS is called in 386 enhanced mode and Windows
+   9x ([WINVBE] BiosEmu): 0 automatic, 1 virtual 8086 mode, 2 the VxD's x86
+   emulator (for a BIOS that needs real mode, such as Intel graphics of
+   Skylake and later). AX=B57Fh, BX=4, CX = the mode. */
+void vxd_biosemu(WORD mode)
+{
+    _asm {
+        push si
+        push di
+        mov cx, mode
+        mov bx, 4
+        mov ax, 0B57Fh
+        int 2Fh
+        pop di
+        pop si
+    }
+}
+#endif
+
+/* WINVBE.386: tell the VxD whether the driver's INT 2Fh handler is in place
+   (AX=B57Fh, BX=2 ready / 3 leaving).  The VxD must not send WVB_NOTIFY before
+   the driver is ready, or its nested Exec_Int faults early in the boot. */
+void vxd_ready(WORD on)
+{
+    WORD fn = on ? 2 : 3;
+    _asm {
+        push si
+        push di
+        mov bx, fn
+        mov ax, 0B57Fh
+        int 2Fh
+        pop di
+        pop si
+    }
+}
+
 /* ---------------- interrupt 10h --------------------------------------- */
 
 int int10(RMREGS *r)
@@ -377,6 +414,7 @@ static void dispi_wr(WORD i, WORD v) { outpw(DISPI_IDX, i); outpw(DISPI_DAT, v);
 static WORD dispi_id;
 static DWORD dispi_lfb;
 static WORD dispi_mem64k;
+static WORD dispi_maxw, dispi_maxh;     /* GETCAPS: largest mode the adapter takes */
 
 /* the DirectDraw HAL (ddhal.c): can flips set the display start through
    the Bochs/QEMU/VirtualBox DISPI registers (the virtual width is the
@@ -471,6 +509,18 @@ static void dispi_probe(void)
     }
     dispi_mem64k = (dispi_id >= 0xB0C5) ? dispi_rd(10) : 64;
     if (!dispi_mem64k) dispi_mem64k = 64;
+    /* VBE_DISPI_GETCAPS (B0C2 and later): with it set, the resolution
+       registers read back the largest size (QEMU 16000x12000) */
+#ifndef OLDWIN
+    if (dispi_id >= 0xB0C2) {
+        WORD en = dispi_rd(4);
+        dispi_wr(4, en | 0x02);
+        dispi_maxw = dispi_rd(1);
+        dispi_maxh = dispi_rd(2);
+        dispi_wr(4, en);
+        if (dispi_maxw < 640 || dispi_maxh < 480) dispi_maxw = dispi_maxh = 0;
+    }
+#endif
     /* find LFB via PCI: QEMU stdvga 1234:1111, VirtualBox 80EE:BEEF */
     for (dev = 0; dev < 32; dev++) {
         DWORD id = pci_read(0, dev, 0, 0);
@@ -479,7 +529,7 @@ static void dispi_probe(void)
             break;
         }
     }
-    DBG("DISPI id=%x mem=%uK lfb=%lx\n", dispi_id, dispi_mem64k * 64, dispi_lfb);
+    DBG("DISPI id=%x mem=%luK max %ux%u lfb=%lx\n", dispi_id, (DWORD)dispi_mem64k * 64, dispi_maxw, dispi_maxh, dispi_lfb);
 }
 
 /* ---------------- VMware SVGA II ----------------------------------------- */
@@ -907,9 +957,29 @@ static void add_mode(WORD num, LPBYTE mi)
     nmodes++;
 }
 
-static void read_edid(void)
+/* one EDID block (0 = base) into blk; 0 on failure */
+static int edid_block(WORD n, BYTE *blk)
 {
     LPBYTE p;
+    WORD i;
+    rclear();
+    rmr.eax = 0x4F15; rmr.ebx = 1; rmr.ecx = 0; rmr.edx = n;
+    rmr.es = g.dosbuf_seg; rmr.edi = 0x200;
+    p = rm_ptr(g.dosbuf_seg, 0x200);
+    far_memset(p, 0, 128);
+    if (!int10(&rmr) || (WORD)rmr.eax != 0x004F) return 0;
+    p = rm_ptr(g.dosbuf_seg, 0x200);
+    for (i = 0; i < 128; i++) blk[i] = p[i];
+    return 1;
+}
+
+static void read_edid(void)
+{
+#ifndef OLDWIN
+    static BYTE ext[128];
+    static EDIDTM t;
+    WORD n;
+#endif
     WORD i;
     BYTE sum = 0;
     rclear();
@@ -918,37 +988,33 @@ static void read_edid(void)
         DBG("EDID: DDC not supported (ax=%x)\n", (WORD)rmr.eax);
         return;
     }
-    rclear();
-    rmr.eax = 0x4F15; rmr.ebx = 1; rmr.ecx = 0; rmr.edx = 0;
-    rmr.es = g.dosbuf_seg; rmr.edi = 0x200;
-    p = rm_ptr(g.dosbuf_seg, 0x200);
-    far_memset(p, 0, 128);
-    if (!int10(&rmr) || (WORD)rmr.eax != 0x004F) {
+    if (!edid_block(0, g.edid)) {
         DBG("EDID: read failed (ax=%x)\n", (WORD)rmr.eax);
         return;
     }
-    for (i = 0; i < 128; i++) { g.edid[i] = p[i]; sum += p[i]; }
+    for (i = 0; i < 128; i++) sum += g.edid[i];
     if (g.edid[0] != 0 || g.edid[1] != 0xFF || g.edid[7] != 0) {
         DBG("EDID: bad header\n");
         return;
     }
     g.have_edid = 1;
-    /* preferred (first) detailed timing */
-    {
-        BYTE *d = g.edid + 54;
-        WORD clk = d[0] | (d[1] << 8);
-        if (clk) {
-            WORD ha = d[2] | ((d[4] & 0xF0) << 4);
-            WORD hb = d[3] | ((d[4] & 0x0F) << 8);
-            WORD va = d[5] | ((d[7] & 0xF0) << 4);
-            WORD vb = d[6] | ((d[7] & 0x0F) << 8);
-            DWORD tot = (DWORD)(ha + hb) * (va + vb);
-            g.edid_w = ha;
-            g.edid_h = va;
-            if (tot) g.edid_hz = (WORD)(((DWORD)clk * 10000UL + tot / 2) / tot);
+    memset(&g.edtm, 0, sizeof(g.edtm));
+    edidx_dtd(g.edid + 54, &g.edtm);            /* preferred (first) detailed timing */
+#ifndef OLDWIN
+    /* extension blocks: DisplayID / CTA-861 timings beyond 4095 pixels */
+    n = g.edid[126];
+    if (n > 3) n = 3;
+    for (i = 1; i <= n; i++) {
+        memset(&t, 0, sizeof(t));
+        if (!edid_block(i, ext)) break;
+        if (edidx_ext(ext, &t)) {
+            DBG("EDID: extension %u (%x): %ux%u@%u\n", i, ext[0], t.ha, t.va, t.hz);
+            edidx_merge(&g.edtm, &t);
         }
     }
-    DBG("EDID: ok sum=%x preferred %ux%u@%u\n", sum, g.edid_w, g.edid_h, g.edid_hz);
+#endif
+    if (g.edtm.src) { g.edid_w = g.edtm.ha; g.edid_h = g.edtm.va; g.edid_hz = g.edtm.hz; }
+    DBG("EDID: ok sum=%x preferred %ux%u@%u (source %u)\n", sum, g.edid_w, g.edid_h, g.edid_hz, g.edtm.src);
 }
 
 int vbe_probe(void)
@@ -1050,6 +1116,15 @@ static void set_dispi(MODEINFO *m, WORD w, WORD h, WORD bpp)
     if (bpp >= 24) { m->rsize = 8; m->rpos = 16; m->gsize = 8; m->gpos = 8; m->bsize = 8; }
 }
 
+/* the largest screen: 16-bit GDI coordinates and the DIB engine's 16-bit
+   scan line width (bmWidthBytes is a signed 16-bit value) set the limit,
+   not 4096: 7680x4320 (8K) in 32 bpp has a 30720-byte scan line */
+#define WVB_MAXDIM 16384U
+static int dim_ok(WORD w, WORD h, DWORD pitch)
+{
+    return w >= 320 && h >= 200 && w <= WVB_MAXDIM && h <= WVB_MAXDIM && pitch <= 32767UL;
+}
+
 /*
  * choose the mode from SYSTEM.INI [WINVBE] settings:
  *   Mode=0x117   explicit VBE mode
@@ -1084,7 +1159,7 @@ static int select_mode(void)
             if (!lin && !ban) continue;
             if (g.req_access == 1 && !lin) continue;
             if (g.req_access == 2 && !ban) continue;
-            if (m->xres > 4096 || m->yres > 4096) continue;
+            if (!dim_ok(m->xres, m->yres, m->lpitch)) continue;
             if ((DWORD)m->lpitch * m->yres > (DWORD)g.totalmem64k * 65536UL && g.totalmem64k) continue;
             score = (DWORD)(m->xres > w ? m->xres - w : w - m->xres) * 4 +
                     (DWORD)(m->yres > h ? m->yres - h : h - m->yres) * 4;
@@ -1112,7 +1187,8 @@ static int select_mode(void)
     if (dispi_id && g.use_dispi && (best == 0xFFFF || modes[best].xres != w || modes[best].yres != h ||
                                      (modes[best].bpp != d && !(d == 24 && modes[best].bpp == 32)))) {
         DWORD need = (DWORD)w * ((d + 7) >> 3) * h;
-        if (need <= (DWORD)dispi_mem64k * 65536UL && w >= 320 && h >= 200 && w <= 4096 && h <= 4096) {
+        if (need <= (DWORD)dispi_mem64k * 65536UL && dim_ok(w, h, (DWORD)w * ((d + 7) >> 3)) &&
+            (!dispi_maxw || w <= dispi_maxw) && (!dispi_maxh || h <= dispi_maxh)) {
             set_dispi(&g.mi, w, h, d);
             DBG("select: DISPI %ux%ux%u\n", w, h, d);
             return 1;
@@ -1200,7 +1276,8 @@ WORD vbe_mode_ok(WORD w, WORD h, WORD bpp)
     }
     if (svga_port && (bpp == 32 || bpp == 24) && (!svga_maxw || w <= svga_maxw) && (!svga_maxh || h <= svga_maxh))
         return (DWORD)w * 4 * h <= svga_vram ? 0 : 2;
-    if (dispi_id && g.use_dispi && w <= 4096 && h <= 4096)
+    if (dispi_id && g.use_dispi && dim_ok(w, h, (DWORD)w * ((bpp + 7) >> 3)) &&
+        (!dispi_maxw || w <= dispi_maxw) && (!dispi_maxh || h <= dispi_maxh))
         return need <= (DWORD)dispi_mem64k * 65536UL ? 0 : 2;
     return 4;
 }
@@ -1216,7 +1293,7 @@ typedef struct {
 } CRTCINFO;
 
 /* VESA CVT 1.2 timing (standard and reduced blanking), integer math */
-static void calc_cvt(CRTCINFO *c, WORD w, WORD h, WORD hz, BYTE reduced)
+static int calc_cvt(CRTCINFO *c, WORD w, WORD h, WORD hz, BYTE reduced)
 {
     WORD vsync;
     DWORD htotal, vtotal, pclk;
@@ -1235,6 +1312,7 @@ static void calc_cvt(CRTCINFO *c, WORD w, WORD h, WORD hz, BYTE reduced)
         c->hss = w + 48; c->hse = w + 48 + 32;
         c->vss = h + 3;  c->vse = h + 3 + vsync;
         c->flags = 0x08;                     /* +hsync, -vsync */
+        if ((DWORD)hz * vtotal > 0xFFFFFFFFUL / htotal) return 0;   /* beyond a 32-bit pixel clock */
         pclk = (DWORD)hz * vtotal * htotal;
         pclk = (pclk / 250000UL) * 250000UL;
     } else {
@@ -1247,7 +1325,9 @@ static void calc_cvt(CRTCINFO *c, WORD w, WORD h, WORD hz, BYTE reduced)
         if ((long)idc_m < 20000L) idc_m = 20000UL;
         hblank = ((DWORD)w * idc_m / (100000UL - idc_m)) / 16 * 16;
         htotal = w + hblank;
-        khz = htotal * 1000000UL / hpe_ns;              /* kHz */
+        /* kHz = htotal * 10^6 / hpe_ns, in two steps: htotal * 10^6
+           overflows 32 bits beyond 4294 pixels */
+        khz = htotal * 1000UL / hpe_ns * 1000UL + (htotal * 1000UL % hpe_ns) * 1000UL / hpe_ns;
         pclk = (khz / 250UL) * 250000UL;
         hsync = ((htotal * 8 / 100 + 4) / 8) * 8;
         c->hse = w + (WORD)(hblank / 2);                /* end of sync = start of back porch */
@@ -1259,6 +1339,7 @@ static void calc_cvt(CRTCINFO *c, WORD w, WORD h, WORD hz, BYTE reduced)
     c->vtotal = (WORD)vtotal;
     c->pclk = pclk;
     c->refresh = (WORD)(pclk / (htotal * vtotal / 100));
+    return 1;
 }
 
 static int fill_crtc(CRTCINFO *c)
@@ -1266,30 +1347,22 @@ static int fill_crtc(CRTCINFO *c)
     WORD hz = g.req_hz;
     memset(c, 0, sizeof(*c));
     /* exact EDID native timing if refresh matches native */
-    if (g.have_edid && g.mi.xres == g.edid_w && g.mi.yres == g.edid_h &&
+    if (g.have_edid && g.edtm.pclk10k && g.mi.xres == g.edtm.ha && g.mi.yres == g.edtm.va &&
         (hz == 0 || hz == g.edid_hz || hz == 1)) {
-        BYTE *d = g.edid + 54;
-        WORD clk = d[0] | (d[1] << 8);
-        WORD ha = d[2] | ((d[4] & 0xF0) << 4), hb = d[3] | ((d[4] & 0x0F) << 8);
-        WORD va = d[5] | ((d[7] & 0xF0) << 4), vb = d[6] | ((d[7] & 0x0F) << 8);
-        WORD hso = d[8] | ((d[11] & 0xC0) << 2), hsw = d[9] | ((d[11] & 0x30) << 4);
-        WORD vso = (d[10] >> 4) | ((d[11] & 0x0C) << 2), vsw = (d[10] & 0x0F) | ((d[11] & 0x03) << 4);
+        EDIDTM *e = &g.edtm;
         if (hz == 0) return 0;
-        c->htotal = ha + hb; c->hss = ha + hso; c->hse = ha + hso + hsw;
-        c->vtotal = va + vb; c->vss = va + vso; c->vse = va + vso + vsw;
+        c->htotal = e->ha + e->hb; c->hss = e->ha + e->hso; c->hse = e->ha + e->hso + e->hsw;
+        c->vtotal = e->va + e->vb; c->vss = e->va + e->vso; c->vse = e->va + e->vso + e->vsw;
         c->flags = 0;
-        if ((d[17] & 0x18) == 0x18) {
-            if (!(d[17] & 0x02)) c->flags |= 0x04;
-            if (!(d[17] & 0x04)) c->flags |= 0x08;
-        }
-        c->pclk = (DWORD)clk * 10000UL;
+        if (!e->hpos) c->flags |= 0x04;
+        if (!e->vpos) c->flags |= 0x08;
+        c->pclk = e->pclk10k * 10000UL;
         c->refresh = (WORD)(c->pclk / ((DWORD)c->htotal * c->vtotal / 100));
         return 1;
     }
     if (hz < 50 || hz > 240) return 0;
-    calc_cvt(c, g.mi.xres, g.mi.yres, hz,
-             (BYTE)(g.ini_timing == 2 ? (g.have_edid && (g.edid[20] & 0x80)) : g.ini_timing == 1));
-    return 1;
+    return calc_cvt(c, g.mi.xres, g.mi.yres, hz,
+                    (BYTE)(g.ini_timing == 2 ? (g.have_edid && (g.edid[20] & 0x80)) : g.ini_timing == 1));
 }
 
 /* ---------------- mode set ------------------------------------------- */

@@ -52,6 +52,41 @@ static DWORD de_base, de_limit;
 static BYTE de_tried;
 static BYTE de_access;              /* dibeng_begin nesting */
 
+/* shadow redirection: the DIB engine draws into the cached shadow through one
+   flat selector, and each drawn rectangle (reported by the DIB engine's
+   BeginAccess/EndAccess around every screen access) is flushed to the frame
+   buffer on the outermost EndAccess */
+static WORD  sh_flatsel;            /* flat selector over the whole shadow */
+static DWORD sh_flatbase;           /* its current base (g.shlin) */
+static SHORT fl_l, fl_t, fl_r, fl_b;    /* accumulated dirty rectangle */
+static int   fl_depth;              /* BeginAccess nesting */
+
+/* called by DIBENG.DLL (its own DS), so __loadds to reach WINVBE's data */
+static void __far __pascal __loadds dib_begin(LPVOID pdev, WORD l, WORD t, WORD r, WORD b, WORD flags)
+{
+    /* r,b are inclusive (the last pixel), as the DIB engine passes them */
+    if (fl_depth++ == 0) { fl_l = l; fl_t = t; fl_r = r; fl_b = b; }
+    else {
+        if ((SHORT)l < fl_l) fl_l = l;
+        if ((SHORT)t < fl_t) fl_t = t;
+        if ((SHORT)r > fl_r) fl_r = r;
+        if ((SHORT)b > fl_b) fl_b = b;
+    }
+    ((PF_BEGIN)dibe_tab[DT_BEGINACCESS])(pdev, l, t, r, b, flags);
+}
+
+static void __far __pascal __loadds dib_end(LPVOID pdev, WORD flags)
+{
+    ((PF_END)dibe_tab[DT_ENDACCESS])(pdev, flags);
+    if (--fl_depth <= 0) {
+        fl_depth = 0;
+        if (fl_l < 0) fl_l = 0;
+        if (fl_t < 0) fl_t = 0;
+        if (g.shadow && !g.in_background && fl_r >= fl_l && fl_b >= fl_t)
+            shadow_flush(fl_l, fl_t, fl_r + 1, fl_b + 1);   /* inclusive -> exclusive */
+    }
+}
+
 /* does the current mode work with the DIB engine */
 int dibeng_mode_ok(void)
 {
@@ -92,9 +127,14 @@ int dibeng_check(void)
         if (!dibe_tab[i]) { DBG("DIB engine: no ordinal %u\n", dib_ord[i]); return 0; }
     }
     /* VMware SVGA II: the host follows the frame buffer by itself (no
-       command FIFO), as the DIB engine reports no drawn rectangles */
-    if (g.svga) g.ini_vmfifo = 0;
-    g.ini_shadow = 0;
+       command FIFO), as the DIB engine reports no drawn rectangles - and no
+       shadow is wanted, the host reads video memory directly */
+    if (g.svga) { g.ini_vmfifo = 0; g.ini_shadow = 0; }
+    /* otherwise keep ShadowBuffer: the DIB engine draws into the cached shadow
+       and the drawn rectangles are flushed to the frame buffer (pdev_sync), so
+       moving a window with content - which reads the screen back - stays fast
+       instead of reading the uncached frame buffer (ShadowBuffer=0 turns this
+       off and restores the DirectDraw HAL) */
     dibeng_on = 1;
     DBG("DIB engine: on\n");
     return 1;
@@ -150,6 +190,7 @@ void pdev_sync(void)
 {
     LPDIBENGINE de = (LPDIBENGINE)scr_pdev;
     LPBYTE bmi;
+    int use_shadow;
     WORD fl = DE_MINIDRIVER | DE_VRAM;
     if (!dibeng_on || !de) return;
     if (g.lfblin && (g.lfblin != de_base || ((DWORD)g.lfbtiles << 16) - 1 != de_limit)) {
@@ -158,23 +199,43 @@ void pdev_sync(void)
             de_base = g.lfblin; de_limit = ((DWORD)g.lfbtiles << 16) - 1;
         }
     }
+    /* a flat selector over the whole shadow, when one is in use (dibeng is only
+       on without rotation/scaling, so g.spitch == g.pitch and the shadow is a
+       plain copy of the screen) */
+    use_shadow = g.shadow && !g.xf && g.shsel && g.shlin;
+    if (use_shadow) {
+        if (!sh_flatsel) sh_flatsel = sel_alloc(1);
+        if (sh_flatsel && sh_flatbase != g.shlin) {
+            if (sel_setbase(sh_flatsel, g.shlin) && sel_setlimit(sh_flatsel, g.shsize - 1))
+                sh_flatbase = g.shlin;
+        }
+        if (!sh_flatsel || sh_flatbase != g.shlin) use_shadow = 0;
+    }
     de->deType = 0x5250;                        /* 'RP' */
     de->deWidth = g.xres;
     de->deHeight = g.yres;
-    de->deWidthBytes = g.pitch;
+    de->deWidthBytes = use_shadow ? g.spitch : g.pitch;
     de->dePlanes = 1;
     de->deBitsPixel = g.bpp == 15 ? 16 : (BYTE)g.bpp;
     de->deReserved1 = 0;
-    de->deDeltaScan = g.pitch;
+    de->deDeltaScan = use_shadow ? g.spitch : g.pitch;
     de->delpPDevice = 0;
-    de->deBitsOffset = g.fbofs;
-    de->deBitsSelector = de_sel;
+    de->deBitsOffset = use_shadow ? 0 : g.fbofs;
+    de->deBitsSelector = use_shadow ? sh_flatsel : de_sel;
     de->deVersion = 0x400;
     /* CTCHANGE (0x0400): the color table is new - the DIB engine rebuilds
        its color matching from it */
     if (g.palettized) fl |= DE_PALETTIZED | 0x0400;
     if (g.bpp == 16) fl |= DE_FIVE6FIVE;
+    if (use_shadow) fl &= ~DE_VRAM;             /* system RAM, not slow VRAM */
     if (!g.enabled || g.in_background || !dibeng_mode_ok()) fl |= DE_BUSY;
+    /* never let the DIB engine draw through a selector that is not set over the
+       current surface (allocation or set-base/limit failed above, or the buffer
+       moved): drawing there would be a wild write into memory.  Mark the
+       surface busy so the DIB engine leaves it alone until the selector is
+       valid. */
+    if (use_shadow) { if (!sh_flatsel || sh_flatbase != g.shlin) fl |= DE_BUSY; }
+    else if (!de_sel || de_base != g.lfblin || !g.lfblin) fl |= DE_BUSY;
     de->deFlags = fl;
     bmi = dib_bmi();
     {
@@ -191,8 +252,16 @@ void pdev_sync(void)
         h[9] = 0;
     }
     de->deBitmapInfo = (LPVOID)bmi;
-    de->deBeginAccess = (LPVOID)dibe_tab[DT_BEGINACCESS];
-    de->deEndAccess = (LPVOID)dibe_tab[DT_ENDACCESS];
+    /* with the shadow, intercept the DIB engine's screen accesses to flush each
+       drawn rectangle to the frame buffer; otherwise it draws to the frame
+       buffer directly and the DIB engine's own stubs are used */
+    if (use_shadow) {
+        de->deBeginAccess = (LPVOID)dib_begin;
+        de->deEndAccess = (LPVOID)dib_end;
+    } else {
+        de->deBeginAccess = (LPVOID)dibe_tab[DT_BEGINACCESS];
+        de->deEndAccess = (LPVOID)dibe_tab[DT_ENDACCESS];
+    }
     dib_palettized = g.palettized;
 }
 

@@ -1,4 +1,4 @@
-; WINVBE v1.2 - Universal VESA/VGA/SVGA display driver
+; WINVBE v1.3 - Universal VESA/VGA/SVGA display driver
 ; OEMSETUP.INF for Windows 3.1 and Windows for Workgroups 3.1/3.11 Setup:
 ;   Display -> "Other display (Requires disk from OEM)" -> path of this folder
 ; All files Setup needs are in this folder - no Windows disks are needed.

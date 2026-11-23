@@ -76,6 +76,8 @@ Exec_Int            equ 84h
 End_Nest_Exec       equ 86h
 Save_Client_State   equ 8Dh
 MapPhysToLinear     equ 6Ch
+HeapAllocate        equ 4Fh
+HeapFree            equ 51h
 Restore_Client_State equ 8Eh
 Enable_Local_Trapping equ 98h
 Disable_Local_Trapping equ 9Ah
@@ -149,6 +151,7 @@ dev_init:
         pop     ebx
 init:   mov     [sysvm], ebx
         mov     [focus_vm], ebx
+        call    intel_unreal
         call    detect
         clc
         ret
@@ -344,6 +347,8 @@ idle_cb:
         or      al, [fg_pending]
         or      al, [modechk_pending]
         jz      .out
+        cmp     byte [drv_ready], 0             ; driver not hooked yet: leave the
+        je      .out                            ; events pending, notify once ready
         cmp     byte [inmsg], 0                 ; message mode: later
         jne     .out
         test    dword [ebp + 2Ch], 20000h       ; V86 mode now: later
@@ -410,6 +415,11 @@ notify:
 ; Debug build: AX=4F7Eh/4F7Fh test triggers, AX=4F10h calls logged.
 int10_hook:
         cmp     ebx, [sysvm]
+        jne     .nemu
+        call    emu_try                         ; the BIOS in the x86 emulator
+        jc      .nemu
+        ret                                     ; done (CF clear)
+.nemu:  cmp     ebx, [sysvm]
         jne     .nsys
         cmp     byte [win9x], 0                 ; Windows 9x VDD: passes them
         jne     .nsys
@@ -827,7 +837,35 @@ text_event:
 int2f_hook:
         cmp     word [ebp + 1Ch], 0B57Fh
         jne     .pass
-        cmp     word [ebp + 10h], 1
+        cmp     word [ebp + 10h], 2             ; BX=2: the display driver is ready
+        jne     .nr
+        mov     byte [drv_ready], 1
+        mov     word [ebp + 1Ch], 0
+        clc
+        ret
+.nr:    cmp     word [ebp + 10h], 3             ; BX=3: the display driver is leaving
+        jne     .wc
+        mov     byte [drv_ready], 0
+        mov     byte [resume_pending], 0        ; drop any events it will never get
+        mov     byte [fg_pending], 0
+        mov     byte [modechk_pending], 0
+        mov     word [ebp + 1Ch], 0
+        clc
+        ret
+.wc:    cmp     word [ebp + 10h], 4             ; BX=4: CX = BIOS calls 0 auto,
+        jne     .w1                             ; 1 V86 mode, 2 x86 emulator
+        mov     al, [ebp + 18h]
+        mov     [emu_mode], al
+        cmp     al, 1
+        jne     .w2
+        mov     byte [emu_on], 2
+.w2:    cmp     al, 2
+        jne     .w3
+        mov     byte [emu_on], 1
+.w3:    mov     word [ebp + 1Ch], 0
+        clc
+        ret
+.w1:    cmp     word [ebp + 10h], 1
         jne     .pass
         pushad
         mov     edx, [ebp + 14h]
@@ -1598,8 +1636,178 @@ owner   dd 0
 focus_vm dd 0                   ; VM with the display focus (any hardware)
 inmsg   db 0                    ; message mode (any hardware)
 resume_pending db 0
+
+; ---------------------------------------------------------------------
+; Video BIOS calls of the system VM through the x86 emulator (emuvxd.c,
+; linked at emu_blob). Windows 3.x enhanced mode and 9x run the BIOS in
+; virtual 8086 mode, where a BIOS using "unreal" mode (Intel graphics of
+; Skylake and later) fails. emu_on: 0 undecided (the first VBE call is run
+; in the emulator and decides: privileged instructions -> stay), 1 the
+; emulator, 2 V86 mode. emu_mode (INT 2Fh B57Fh BX=4 from the driver,
+; [WINVBE] BiosEmu): 0 auto, 1 V86 only, 2 the emulator.
+; EBX = VM, EBP = client registers -> CF clear: done in the emulator
+emu_try:
+        cmp     byte [emu_mode], 1
+        je      .no
+        cmp     byte [emu_on], 2
+        je      .no
+        cmp     byte [emu_on], 1
+        je      .go
+        cmp     byte [ebp + 1Dh], 4Fh           ; undecided: VBE calls decide
+        jne     .no
+.go:    cmp     byte [emu_ready], 2
+        je      .no
+        pushad
+        mov     [emu_esp], esp                  ; a stack of its own
+        mov     esp, emu_stack_top
+        cmp     byte [emu_ready], 0
+        jne     .rdy
+%ifdef DEBUGE9
+        mov     al, 'E'
+        out     0E9h, al
+%endif
+        push    vecalls
+        call    emu_blob + 0                    ; ve_init
+        add     esp, 4
+%ifdef DEBUGE9
+        push    eax
+        mov     al, 'e'
+        out     0E9h, al
+        pop     eax
+%endif
+        mov     byte [emu_ready], 1
+        test    eax, eax
+        jnz     .rdy
+        mov     byte [emu_ready], 2
+        jmp     .fail
+.rdy:   cmp     byte [emu_on], 0
+        jne     .run
+        call    emu_blob + 15                   ; ve_clear_priv
+.run:   push    ebp
+        push    dword [ebx + 4]                 ; CB_High_Linear
+        call    emu_blob + 5                    ; ve_int10
+        add     esp, 8
+        test    eax, eax
+        jz      .fail
+        cmp     byte [emu_on], 0
+        jne     .ok
+        call    emu_blob + 10                   ; ve_priv
+        mov     byte [emu_on], 1
+        test    eax, eax
+        jnz     .ok
+        cmp     byte [emu_mode], 2
+        je      .ok
+        mov     byte [emu_on], 2                ; works in V86 mode: leave it there
+.ok:    mov     esp, [emu_esp]
+        popad
+%ifdef DEBUGE9
+        push    eax
+        mov     al, 'X'
+        out     0E9h, al
+        pop     eax
+%endif
+        clc
+        ret
+.fail:  cmp     byte [emu_on], 0
+        jne     .f1
+        mov     byte [emu_on], 2
+.f1:    mov     esp, [emu_esp]
+        popad
+.no:    stc
+        ret
+
+; Intel graphics of Skylake and later at 00:02.0 -> emu_on = 1
+intel_unreal:
+        pushad
+        mov     dx, 0CF8h
+        mov     eax, 80001000h
+        out     dx, eax
+        mov     dl, 0FCh
+        in      eax, dx
+        cmp     ax, 8086h
+        jne     .no
+        shr     eax, 16
+        mov     ebx, eax                        ; device ID
+        mov     dl, 0F8h
+        mov     eax, 80001008h
+        out     dx, eax
+        mov     dl, 0FCh
+        in      eax, dx
+        shr     eax, 24
+        cmp     al, 3                           ; display controller
+        jne     .no
+        cmp     bx, 0A84h                       ; Broxton
+        je      .yes
+        mov     esi, intel_ids
+.l:     lodsb
+        test    al, al
+        jz      .no
+        cmp     al, bh
+        jne     .l
+.yes:   mov     byte [emu_on], 1
+%ifdef DEBUGE9
+        mov     al, 'I'
+        out     0E9h, al
+%endif
+.no:    popad
+        ret
+
+; device ID high bytes: Skylake, Kaby Lake, Coffee/Whiskey Lake, Amber Lake,
+; Comet Lake, Cannon/Apollo Lake, Gemini Lake, Ice Lake, Elkhart/Jasper
+; Lake, Tiger Lake, Rocket Lake, Alder/Raptor Lake, Meteor/Lunar Lake
+intel_ids db 19h, 59h, 3Eh, 87h, 9Bh, 5Ah, 31h, 8Ah, 45h, 4Eh, 9Ah, 4Ch, 46h, 0A7h, 7Dh, 64h, 0
+
+; VMM services for the emulator (cdecl)
+vh_alloc:
+%ifdef DEBUGE9
+        push    eax
+        mov     al, 'A'
+        out     0E9h, al
+        pop     eax
+%endif
+        push    1                               ; HEAPZEROINIT
+        push    dword [esp + 8]
+        VMMcall HeapAllocate
+        add     esp, 8
+        ret
+vh_free:
+        push    0
+        push    dword [esp + 8]
+        VMMcall HeapFree
+        add     esp, 8
+        ret
+vh_map:
+        push    0
+        push    dword [esp + 12]                ; size
+        push    dword [esp + 12]                ; physical
+        VMMcall MapPhysToLinear
+        add     esp, 12
+        ret
+vh_dbg:
+%ifdef DEBUGE9
+        push    esi
+        mov     esi, [esp + 8]
+.l:     lodsb
+        test    al, al
+        jz      .e
+        out     0E9h, al
+        jmp     .l
+.e:     pop     esi
+%endif
+        ret
+
+        align 4
+vecalls dd vh_alloc, vh_free, vh_map, vh_dbg
+emu_esp dd 0
+emu_mode db 0
+emu_on  db 0
+emu_ready db 0
 fg_pending db 0
 modechk_pending db 0
+drv_ready db 0                  ; the display driver has hooked INT 2Fh and can
+                               ; receive WVB_NOTIFY (set via B57Fh BX=2/3); the
+                               ; VxD must not notify before this, or the nested
+                               ; Exec_Int faults very early in the boot (race)
 tmode   db 0
 tpage   db 0
 bda_a   times 1Eh db 0                  ; 40:49 - 40:66
@@ -1654,3 +1862,20 @@ mfree   dd 0
 mdef    dd 0
 mbase   dd 0
 mtype   db 0
+
+; ---------------------------------------------------------------------
+; the x86 emulator (emuvxd.c + libx86emu), linked for this address
+EMU_OFS equ 6000h
+%if ($ - $$) > EMU_OFS
+%error "the VxD code reaches into the emulator: raise EMU_OFS"
+%endif
+        times EMU_OFS - ($ - $$) db 0
+emu_blob:
+%if ORG = 0
+        incbin  "obj/emu/emu_0.bin"
+%else
+        incbin  "obj/emu/emu_1.bin"
+%endif
+        align 16
+        times 4000h db 0                        ; the emulator's stack
+emu_stack_top:

@@ -1,0 +1,167 @@
+diff --git a/vgasrc/bochsvga.c b/vgasrc/bochsvga.c
+index fb3978b..68ba157 100644
+--- a/vgasrc/bochsvga.c
++++ b/vgasrc/bochsvga.c
+@@ -70,13 +70,71 @@ bochsvga_list_modes(u16 seg, u16 *dest, u16 *last)
+  * Helper functions
+  ****************************************************************/
+ 
++/* skl-vga (QEMU, Intel Skylake GT2 look-alike): the DISPI registers are
++   reached through the index/data pair of the I/O BAR (BAR4), the way the
++   Intel video BIOS reaches its MMIO registers; there are no 1CEh ports */
++u16 dispi_iobar VAR16;
++
++/* skl-vga with "unreal=on": like the Intel video BIOS, VBE calls reach the
++   memory-mapped registers above 1 MB in "unreal" mode - a moment in
++   protected mode to load FS with a 4 GB limit, then a 32-bit address.
++   That works in real mode and fails in virtual 8086 mode (MOV CR0 is
++   privileged there): the calls then return 014Fh. */
++u8 skl_unreal VAR16;
++u32 skl_mmio VAR16;
++u64 skl_gdt[2] VAR16 = { 0, 0x008f92000000ffffULL };
++struct { u16 limit; u32 base; } PACKED skl_gdtr VAR16;
++
++static u32 skl_flat_read(u32 addr)
++{
++    u32 v;
++    asm volatile(
++        "pushfl\n"
++        "cli\n"
++        "pushw %%fs\n"
++        "lgdtl %%cs:skl_gdtr\n"
++        "movl %%cr0, %%eax\n"
++        "orb $1, %%al\n"
++        "movl %%eax, %%cr0\n"
++        "movw $8, %%ax\n"
++        "movw %%ax, %%fs\n"
++        "movl %%cr0, %%eax\n"
++        "andb $0xfe, %%al\n"
++        "movl %%eax, %%cr0\n"
++        "movl %%fs:(%%edx), %%eax\n"
++        "popw %%fs\n"
++        "popfl\n"
++        : "=&a"(v) : "d"(addr) : "memory", "cc");
++    return v;
++}
++
++/* 1 = the registers are reachable (always without unreal=on) */
++int skl_regs_ok(void)
++{
++    if (!GET_GLOBAL(skl_unreal))
++        return 1;
++    /* the EDID header at the start of BAR0: 00 FF FF FF */
++    return skl_flat_read(GET_GLOBAL(skl_mmio)) == 0xffffff00;
++}
++
+ static inline u16 dispi_read(u16 reg)
+ {
++    u16 io = GET_GLOBAL(dispi_iobar);
++    if (io) {
++        outl(reg, io);
++        return inl(io + 4);
++    }
+     outw(reg, VBE_DISPI_IOPORT_INDEX);
+     return inw(VBE_DISPI_IOPORT_DATA);
+ }
+ static inline void dispi_write(u16 reg, u16 val)
+ {
++    u16 io = GET_GLOBAL(dispi_iobar);
++    if (io) {
++        outl(reg, io);
++        outl(val, io + 4);
++        return;
++    }
+     outw(reg, VBE_DISPI_IOPORT_INDEX);
+     outw(val, VBE_DISPI_IOPORT_DATA);
+ }
+@@ -313,6 +371,23 @@ bochsvga_setup(void)
+     if (ret)
+         return ret;
+ 
++    if (CONFIG_VGA_PCI && GET_GLOBAL(VgaBDF) >= 0 &&
++        pci_config_readw(GET_GLOBAL(VgaBDF), PCI_VENDOR_ID) == 0x8086) {
++        u32 b4 = pci_config_readl(GET_GLOBAL(VgaBDF), PCI_BASE_ADDRESS_4);
++        if (b4 & PCI_BASE_ADDRESS_SPACE_IO)
++            SET_VGA(dispi_iobar, b4 & PCI_BASE_ADDRESS_IO_MASK);
++        SET_VGA(skl_mmio, pci_config_readl(GET_GLOBAL(VgaBDF), PCI_BASE_ADDRESS_0)
++                & PCI_BASE_ADDRESS_MEM_MASK);
++        SET_VGA(skl_gdtr.limit, sizeof(skl_gdt) - 1);
++        SET_VGA(skl_gdtr.base, (u32)GET_SEG(CS) * 16 + (u32)skl_gdt);
++        if (GET_GLOBAL(dispi_iobar)) {
++            outl(0x100, GET_GLOBAL(dispi_iobar));
++            SET_VGA(skl_unreal, inl(GET_GLOBAL(dispi_iobar) + 4) & 1);
++        }
++        dprintf(1, "skl-vga: iobar %x mmio %x unreal %d\n", GET_GLOBAL(dispi_iobar),
++                GET_GLOBAL(skl_mmio), GET_GLOBAL(skl_unreal));
++    }
++
+     /* Sanity checks */
+     dispi_write(VBE_DISPI_INDEX_ID, VBE_DISPI_ID0);
+     if (dispi_read(VBE_DISPI_INDEX_ID) != VBE_DISPI_ID0) {
+@@ -336,6 +411,11 @@ bochsvga_setup(void)
+         case 0x15ad: /* qemu vmware vga */
+             barid = 1;
+             break;
++        case 0x8086: /* skl-vga: aperture (GMADR) in BAR2, EDID in BAR0 */
++            bar = pci_config_readl(bdf, PCI_BASE_ADDRESS_0);
++            io_addr = bar & PCI_BASE_ADDRESS_MEM_MASK;
++            barid = 2;
++            break;
+         case 0x1234: /* stdvga */
+             bar = pci_config_readl(bdf, PCI_BASE_ADDRESS_2);
+             io_addr = bar & PCI_BASE_ADDRESS_IO_MASK;
+diff --git a/vgasrc/vbe.c b/vgasrc/vbe.c
+index 4301194..e12d944 100644
+--- a/vgasrc/vbe.c
++++ b/vgasrc/vbe.c
+@@ -14,7 +14,8 @@
+ #include "string.h" // memset_far
+ #include "vgabios.h" // get_current_mode
+ #include "vgahw.h" // vgahw_set_mode
+-#include "vgautil.h" // handle_104f
++#include "vgautil.h"
++int skl_regs_ok(void); // handle_104f
+ 
+ #define VBE_OEM_STRING "SeaBIOS VBE(C) 2011"
+ #define VBE_VENDOR_STRING "SeaBIOS Developers"
+@@ -24,11 +25,15 @@
+ u32 VBE_total_memory VAR16 = 256 * 1024;
+ u32 VBE_capabilities VAR16;
+ u32 VBE_framebuffer VAR16;
+-u8 VBE_edid[256] VAR16;
++u8 VBE_edid[384] VAR16;
+ 
+ static void
+ vbe_104f00(struct bregs *regs)
+ {
++    if (CONFIG_VGA_BOCHS && !skl_regs_ok()) {
++        regs->ax = 0x014f;
++        return;
++    }
+     u16 seg = regs->es;
+     struct vbe_info *info = (void*)(regs->di+0);
+     size_t info_size = offsetof(struct vbe_info, oem_data);
+@@ -213,6 +218,10 @@ static void
+ vbe_104f02(struct bregs *regs)
+ {
+     dprintf(1, "VBE mode set: %x\n", regs->bx);
++    if (CONFIG_VGA_BOCHS && !skl_regs_ok()) {
++        regs->ax = 0x014f;
++        return;
++    }
+ 
+     int mode = regs->bx & ~MF_VBEFLAGS;
+     int flags = regs->bx & MF_VBEFLAGS;
+diff --git a/vgasrc/vgautil.h b/vgasrc/vgautil.h
+index 11aadb7..6978580 100644
+--- a/vgasrc/vgautil.h
++++ b/vgasrc/vgautil.h
+@@ -65,7 +65,7 @@ void swcursor_check_event(void);
+ extern u32 VBE_total_memory;
+ extern u32 VBE_capabilities;
+ extern u32 VBE_framebuffer;
+-extern u8 VBE_edid[256];
++extern u8 VBE_edid[384];
+ void handle_104f(struct bregs *regs);
+ 
+ // vgafonts.c

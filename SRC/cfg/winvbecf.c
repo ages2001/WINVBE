@@ -167,6 +167,23 @@ static void build_res(void)
         }
         res[k].depths |= depth_bit(m->bpp);
     }
+    /* an emulator adapter (DISPI) sets any size: offer the monitor's native
+       one when the BIOS mode list does not have it (an ultrawide or 8K
+       monitor, beyond the BIOS's list) */
+    if (vi->dispi_id && vi->edid_ok && vi->natw >= 640 && vi->nath >= 480 && nres < 96) {
+        for (k = 0; k < nres; k++)
+            if (res[k].w == vi->natw && res[k].h == vi->nath) break;
+        if (k == nres) {
+            res[nres].w = vi->natw; res[nres].h = vi->nath; res[nres].depths = 0;
+            for (i = 8; i <= 32; i += 8) {
+                int b = i;
+                if ((DWORD)vi->natw * (b / 8) <= 32767UL &&
+                    (!vi->dispi_memkb || (DWORD)vi->natw * (b / 8) * vi->nath <= vi->dispi_memkb * 1024UL))
+                    res[nres].depths |= depth_bit(b);
+            }
+            if (res[nres].depths) nres++;
+        }
+    }
 }
 
 static int ini_int(char *key, int def)
@@ -783,8 +800,18 @@ static BOOL save_settings(HWND dlg)
         BOOL ok1, ok2;
         w = GetDlgItemInt(dlg, IDC_CUSTW, &ok1, FALSE);
         h = GetDlgItemInt(dlg, IDC_CUSTH, &ok2, FALSE);
-        if (!ok1 || !ok2 || w < 320 || h < 200 || w > 4096 || h > 4096) {
-            MessageBox(dlg, "Custom size must be between 320x200 and 4096x4096.", "WINVBE", MB_OK | MB_ICONEXCLAMATION);
+        if (!ok1 || !ok2 || w < 320 || h < 200 || (unsigned)w > 16384 || (unsigned)h > 16384) {
+            MessageBox(dlg, "Custom size must be between 320x200 and 16384x16384.", "WINVBE", MB_OK | MB_ICONEXCLAMATION);
+            return FALSE;
+        }
+        /* a scan line is at most 32767 bytes (16-bit GDI): 8K (7680) in 32 bpp fits */
+        if ((DWORD)w * ((d + 7) / 8) > 32767UL) {
+            MessageBox(dlg, "This width is too large for the colour depth: a scan line can have at most 32767 bytes "
+                       "(8191 pixels in 32-bit colour, 10922 in 24-bit, 16383 in 16-bit).", "WINVBE", MB_OK | MB_ICONEXCLAMATION);
+            return FALSE;
+        }
+        if (vi && vi->dispi_memkb && (DWORD)w * ((d + 7) / 8) * h > vi->dispi_memkb * 1024UL) {
+            MessageBox(dlg, "Not enough video memory for this size and colour depth.", "WINVBE", MB_OK | MB_ICONEXCLAMATION);
             return FALSE;
         }
     } else if (sel >= 2 && sel - 2 < nres) {
@@ -1047,7 +1074,16 @@ static int c_gamma, c_bright, c_contr, c0_gamma, c0_bright, c0_contr, c_live;
 /* [WINVBE] Rotate (0, 90, 180, 270) and Scale (0 off, 1 aspect kept, 2 full
    screen): the desktop turned on the mode, or a smaller resolution shown on
    the native mode of the panel; both at the next start of Windows */
-static int c_rot, c_scale, c0_rot, c0_scale;
+static int c_rot, c_scale, c0_rot, c0_scale, c_shadow, c0_shadow, c_biosemu, c0_biosemu;
+/* [WINVBE] BiosEmu (386 enhanced mode and Windows 9x, through WINVBE.386):
+   0 automatic, 1 virtual 8086 mode, 2 the x86 emulator - for a video BIOS
+   that needs real mode, such as Intel graphics of Skylake and later */
+static const char *c_biosemu_names[3] = { "Automatic", "Virtual 8086 mode", "x86 emulator" };
+/* [WINVBE] ShadowBuffer: 1 (default) keeps a copy of the screen in system
+   memory - reads of video memory are very slow on real graphics cards
+   (uncached), and scrolling, moving windows and the cursor read it; 0 draws
+   straight into video memory */
+static const char *c_shadow_names[2] = { "Automatic (on, off on VMware SVGA)", "Off (draw in video memory)" };
 static const char *c_rot_names[4] = { "No", "90 degrees clockwise", "180 degrees", "270 degrees (90 counter-clockwise)" };
 static const char *c_scale_names[3] = { "As the video BIOS sets them", "Scaled to the native mode (aspect kept)",
                                         "Scaled to the native mode (full screen)" };
@@ -1200,6 +1236,13 @@ BOOL FAR PASCAL __export ColorProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             for (i = 0; i < 3; i++) SendDlgItemMessage(dlg, IDC_CSCALE, CB_ADDSTRING, 0, (LPARAM)(LPSTR)c_scale_names[i]);
             SendDlgItemMessage(dlg, IDC_CROTATE, CB_SETCURSEL, c_rot, 0);
             SendDlgItemMessage(dlg, IDC_CSCALE, CB_SETCURSEL, c_scale, 0);
+            c0_shadow = c_shadow = ini_int("ShadowBuffer", 1) ? 0 : 1;
+            for (i = 0; i < 2; i++) SendDlgItemMessage(dlg, IDC_CSHADOW, CB_ADDSTRING, 0, (LPARAM)(LPSTR)c_shadow_names[i]);
+            SendDlgItemMessage(dlg, IDC_CSHADOW, CB_SETCURSEL, c_shadow, 0);
+            c0_biosemu = c_biosemu = ini_int("BiosEmu", 0);
+            if (c_biosemu < 0 || c_biosemu > 2) c0_biosemu = c_biosemu = 0;
+            for (i = 0; i < 3; i++) SendDlgItemMessage(dlg, IDC_CBIOSEMU, CB_ADDSTRING, 0, (LPARAM)(LPSTR)c_biosemu_names[i]);
+            SendDlgItemMessage(dlg, IDC_CBIOSEMU, CB_SETCURSEL, c_biosemu, 0);
         }
         SetScrollRange(GetDlgItem(dlg, IDC_CGAMMA), SB_CTL, 30, 300, FALSE);
         SetScrollRange(GetDlgItem(dlg, IDC_CBRIGHT), SB_CTL, -100, 100, FALSE);
@@ -1220,6 +1263,8 @@ BOOL FAR PASCAL __export ColorProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             c_rot = c_scale = 0;
             SendDlgItemMessage(dlg, IDC_CROTATE, CB_SETCURSEL, 0, 0);
             SendDlgItemMessage(dlg, IDC_CSCALE, CB_SETCURSEL, 0, 0);
+            SendDlgItemMessage(dlg, IDC_CSHADOW, CB_SETCURSEL, 0, 0);
+            SendDlgItemMessage(dlg, IDC_CBIOSEMU, CB_SETCURSEL, 0, 0);
             c_live = c_send();
             c_show(dlg);
             return TRUE;
@@ -1231,10 +1276,16 @@ BOOL FAR PASCAL __export ColorProc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             c_scale = (int)SendDlgItemMessage(dlg, IDC_CSCALE, CB_GETCURSEL, 0, 0);
             if (c_rot < 0) c_rot = 0;
             if (c_scale < 0) c_scale = 0;
-            if (c_rot != c0_rot || c_scale != c0_scale) {
+            c_shadow = (int)SendDlgItemMessage(dlg, IDC_CSHADOW, CB_GETCURSEL, 0, 0);
+            if (c_shadow < 0) c_shadow = 0;
+            c_biosemu = (int)SendDlgItemMessage(dlg, IDC_CBIOSEMU, CB_GETCURSEL, 0, 0);
+            if (c_biosemu < 0) c_biosemu = 0;
+            if (c_rot != c0_rot || c_scale != c0_scale || c_shadow != c0_shadow || c_biosemu != c0_biosemu) {
                 ini_put_int("Rotate", c_rot * 90);
                 ini_put_int("Scale", c_scale);
-                if (MessageBox(dlg, "Turning and scaling take effect when Windows is started again.\n\n"
+                ini_put_int("ShadowBuffer", c_shadow ? 0 : 1);
+                ini_put_int("BiosEmu", c_biosemu);
+                if (MessageBox(dlg, "Turning, scaling, the shadow buffer and the video BIOS calls take effect when Windows is started again.\n\n"
                                     "Restart Windows now?", "WINVBE", MB_YESNO | MB_ICONQUESTION) == IDYES) {
                     EndDialog(dlg, 1);
                     ExitWindows(EW_RESTART, 0);

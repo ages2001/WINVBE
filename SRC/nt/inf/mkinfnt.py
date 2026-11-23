@@ -3,8 +3,11 @@
 for x64 (XP/2003 x64)."""
 import sys, os
 
-def inf(arch):
-    x64 = arch == 'amd64'
+def inf(target):
+    # target: 'nt4' (Windows NT 4.0, non-PnP, Have Disk), 'x86' (Windows 2000 /
+    # XP / 2003, Plug and Play) or 'amd64' (XP x64 / 2003 x64, Plug and Play)
+    x64 = target == 'amd64'
+    nt4 = target == 'nt4'
     dec = ',NTamd64' if x64 else ''
     mfg = 'WINVBE.Mfg' + ('.NTamd64' if x64 else '')
     # the OpenGL ICD: OPENGL32.DLL finds it through DrvEscape(OPENGL_GETINFO)
@@ -26,21 +29,58 @@ def inf(arch):
     glwowc = ', winvbe.OpenGL32' if x64 else ''
     glwows = ('\n\n[winvbe.OpenGL32]\nwvbgl32.dll,wvbgl32w.dll\nwvbglx.dll\nwvbgls.dll' if x64 else
               '\nwvbglx.dll\nwvbgls.dll')
-    return f"""; WINVBE v1.2 - universal VESA/VGA/SVGA display driver
-; {'Windows XP x64 / Server 2003 x64' if x64 else 'Windows NT 4.0, 2000, XP and Server 2003 (x86)'}
+    # the OS line of the header, and the install how-to
+    if nt4:
+        osline = 'Windows NT 4.0 (x86)'
+        howto = ('; Windows NT 4.0 does not use Plug and Play for the display: install with\n'
+                 '; Control Panel > Display > Settings > Display Type > Change > Have Disk >\n'
+                 '; this folder, then choose "WINVBE Universal VESA/VGA/SVGA".')
+    elif x64:
+        osline = 'Windows XP x64 / Server 2003 x64 (Plug and Play)'
+        howto = ('; Device Manager > Display adapters > (adapter) > Update Driver >\n'
+                 ";   Install from a specific location > Don't search > Have Disk > this folder.")
+    else:
+        osline = 'Windows 2000, XP and Server 2003 (x86, Plug and Play)'
+        howto = ('; Device Manager > Display adapters > (adapter) > Update Driver >\n'
+                 ";   Install from a specific location > Don't search > Have Disk > this folder.")
+    # the [WINVBE.Mfg] device matches.  NT 4.0 is not Plug and Play, so it lists
+    # one generic name; Windows 2000+ matches the adapter by PCI id, per vendor
+    # (Intel, AMD/ATI, nVidia, S3) above the bare class code.
+    if nt4:
+        mfg_block = ('%WVB.Desc% = winvbe, PCI\\CC_0300\n'
+                     '%WVB.Desc% = winvbe, PCI\\CC_0001')
+        vendor_strings = ''
+    else:
+        mfg_block = (
+            '; Per-vendor matches (PCI\\VEN_xxxx&CC_0300 is a compatible id every display\n'
+            '; adapter of that vendor carries): Intel, AMD/ATI, nVidia and S3.  These rank\n'
+            '; above the bare class-code match below, so WINVBE is chosen in preference to a\n'
+            '; vendor driver that only puts the adapter in VGA fall-back - the Intel GMA /\n'
+            '; ICH integrated graphics (e.g. Samsung RV510, ICH9M) among them.\n'
+            '%WVB.Intel%  = winvbe, PCI\\VEN_8086&CC_0300\n'
+            '%WVB.AMD%    = winvbe, PCI\\VEN_1002&CC_0300\n'
+            '%WVB.NVIDIA% = winvbe, PCI\\VEN_10DE&CC_0300\n'
+            '%WVB.S3%     = winvbe, PCI\\VEN_5333&CC_0300\n'
+            '; and every other display adapter, by class code (VGA and 3D controllers)\n'
+            '%WVB.Desc% = winvbe, PCI\\CC_0300\n'
+            '%WVB.Desc% = winvbe, PCI\\CC_0001\n'
+            '%WVB.Desc% = winvbe, PCI\\CC_0380')
+        vendor_strings = (
+            'WVB.Intel    = "WINVBE Universal VESA/VGA/SVGA (Intel)"\n'
+            'WVB.AMD      = "WINVBE Universal VESA/VGA/SVGA (AMD/ATI)"\n'
+            'WVB.NVIDIA   = "WINVBE Universal VESA/VGA/SVGA (nVidia)"\n'
+            'WVB.S3       = "WINVBE Universal VESA/VGA/SVGA (S3)"\n')
+    return f"""; WINVBE v1.3 - universal VESA/VGA/SVGA display driver
+; {osline}
 ;
-; Windows 2000/XP/2003: Device Manager > Display adapters > (adapter) >
-;   Update Driver > Install from a specific location > Don't search >
-;   Have Disk > this folder.
-; Windows NT 4.0: Control Panel > Display > Settings > Display Type >
-;   Change > Have Disk > this folder.
+{howto}
 
 [Version]
 Signature="$CHICAGO$"
 Provider=%WVB%
 ClassGUID={{4D36E968-E325-11CE-BFC1-08002BE10318}}
 Class=Display
-DriverVer=11/02/2026,1.2.0.0
+DriverVer=11/09/2026,1.3.0.0
 
 [DestinationDirs]
 DefaultDestDir   = 11
@@ -62,8 +102,7 @@ wvbgl32.dll  = 1{glwowf}
 %WVB% = WINVBE.Mfg{dec}
 
 [{mfg}]
-%WVB.Desc% = winvbe, PCI\\CC_0300
-%WVB.Desc% = winvbe, PCI\\CC_0001
+{mfg_block}
 
 [winvbe]
 CopyFiles = winvbe.Miniport, winvbe.Display, winvbe.Tools, winvbe.OpenGL{glwowc}
@@ -123,7 +162,7 @@ HKR,,TypesSupported,0x00010001,7
 [Strings]
 WVB          = "WINVBE"
 WVB.Desc     = "WINVBE Universal VESA/VGA/SVGA"
-Disk         = "WINVBE v1.2 for Windows NT"
+{vendor_strings}Disk         = "WINVBE v1.3 for Windows NT"
 REG_SZ       = 0x00000000
 REG_MULTI_SZ = 0x00010000
 REG_DWORD    = 0x00010001
@@ -136,8 +175,9 @@ REG_DWORD    = 0x00010001
 # WINVBECF writes to Control\Setup "Video" ("WINVBE <w>x<h>x<bpp>")
 NT3_RES = [(640, 480), (800, 600), (1024, 768), (1152, 864), (1280, 720), (1280, 768), (1280, 800),
            (1280, 960), (1280, 1024), (1360, 768), (1366, 768), (1400, 1050), (1440, 900), (1600, 900),
-           (1600, 1200), (1680, 1050), (1920, 1080), (1920, 1200), (2048, 1536), (2560, 1440),
-           (2560, 1600), (3840, 2160)]
+           (1600, 1200), (1680, 1050), (1920, 1080), (1920, 1200), (2048, 1536), (2560, 1080),
+           (2560, 1440), (2560, 1600), (3440, 1440), (3840, 1080), (3840, 1600), (3840, 2160),
+           (4096, 2160), (5120, 1440), (5120, 2160), (5120, 2880), (7680, 2160), (7680, 4320)]
 NT3_MODES = [(w, h, b) for w, h in NT3_RES for b in (8, 15, 16, 24, 32)]
 COLORS = {8: '256 colors', 15: '32768 colors', 16: '65536 colors', 24: '16.7 million colors',
           32: '16.7 million colors'}
@@ -148,7 +188,7 @@ def oemsetup():
     # padded so that Setup's sorted list is in order of size and depth
     txt = ''.join('    "WINVBE %ux%ux%u"%s= "WINVBE VESA %4u x %4u, %2u bit (%s)"\n' %
                   (w, h, b, ' ' * (16 - len('%ux%ux%u' % (w, h, b))), w, h, b, COLORS[b]) for w, h, b in NT3_MODES)
-    return r"""; WINVBE v1.2 - universal VESA display driver for Windows NT 3.1, 3.5, 3.51
+    return r"""; WINVBE v1.3 - universal VESA display driver for Windows NT 3.1, 3.5, 3.51
 ;
 ; Windows NT Setup (Main group) > Options > Change System Settings >
 ;   Display > Other > path of this folder (e.g. A:\ or C:\WINVBE\NT\I386\NT3X).
@@ -365,7 +405,7 @@ finish_InstallOption = +
     exit
 
 [Source Media Descriptions]
-    1 = "WINVBE v1.2 for Windows NT 3.x", TAGFILE = winvbe.sys
+    1 = "WINVBE v1.3 for Windows NT 3.x", TAGFILE = winvbe.sys
 
 [ProductType]
 STF_PRODUCT  = Winnt
@@ -404,10 +444,10 @@ wvbgls   = 1,WVBGLS.DLL
 """
 
 out = sys.argv[1]
-for arch, d in (('i386', 'NT/I386/NT4-XP'), ('amd64', 'NT/AMD64')):
+for target, d in (('nt4', 'NT/I386/NT4'), ('x86', 'NT/I386/2KXP'), ('amd64', 'NT/AMD64')):
     p = os.path.join(out, d)
     os.makedirs(p, exist_ok=True)
-    open(os.path.join(p, 'WINVBE.INF'), 'w', newline='\r\n').write(inf(arch))
+    open(os.path.join(p, 'WINVBE.INF'), 'w', newline='\r\n').write(inf(target))
 p = os.path.join(out, 'NT/I386/NT3X')
 os.makedirs(p, exist_ok=True)
 open(os.path.join(p, 'OEMSETUP.INF'), 'w', newline='\r\n').write(oemsetup())

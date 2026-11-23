@@ -1,0 +1,211 @@
+diff --git a/hw/display/vga-pci.c b/hw/display/vga-pci.c
+index e4f45b4..51d6a12 100644
+--- a/hw/display/vga-pci.c
++++ b/hw/display/vga-pci.c
+@@ -33,6 +33,8 @@
+ #include "ui/console.h"
+ #include "qemu/module.h"
+ #include "qemu/timer.h"
++#include "qemu/units.h"
++#include "qemu/host-utils.h"
+ #include "hw/loader.h"
+ #include "hw/display/edid.h"
+ #include "qom/object.h"
+@@ -52,6 +54,12 @@ struct PCIVGAState {
+     MemoryRegion mmio;
+     MemoryRegion mrs[4];
+     uint8_t edid[384];
++    /* skl-vga */
++    MemoryRegion skl_gtt, skl_aper, skl_io, skl_edid;
++    uint32_t skl_index;
++    uint32_t skl_read_ns;           /* aperture read cost (uncached VRAM) */
++    bool skl_vga_on;                /* VGA decode on (class 0300) or off (0380) */
++    bool skl_unreal;                /* the BIOS uses unreal mode (fails in V86) */
+ };
+ 
+ #define TYPE_PCI_VGA "pci-vga"
+@@ -419,11 +427,184 @@ static const TypeInfo secondary_info = {
+     .class_init    = secondary_class_init,
+ };
+ 
++/*
++ * skl-vga: an Intel Skylake GT2 (HD Graphics 530, 8086:1912) look-alike
++ * for testing VESA drivers. What a VESA driver sees of the real device:
++ *   00:02.0, class 030000 (038000 with VGA decode off), INTA
++ *   BAR0  GTTMMADR  64-bit memory, 16 MB (here: the EDID blob at 0)
++ *   BAR2  GMADR     64-bit prefetchable aperture: the linear frame buffer
++ *   BAR4  IOBAR     64 bytes: MMIO index (0) / data (4), which the video
++ *                   BIOS uses to reach the registers from real mode
++ * There are no Bochs DISPI ports at 1CEh: the BIOS (SeaVGABIOS built for
++ * 8086:1912) programs the mode through the IOBAR. Reads of the aperture
++ * can be slowed down (read-ns) as on real hardware, where the frame buffer
++ * is uncached and a read crosses the GTT: a few MB/s.
++ */
++#define TYPE_SKL_VGA "skl-vga"
++
++static uint64_t skl_aper_read(void *opaque, hwaddr addr, unsigned size)
++{
++    PCIVGAState *d = opaque;
++    VGACommonState *s = &d->vga;
++    if (d->skl_read_ns) {
++        int64_t end = get_clock() + d->skl_read_ns;
++        while (get_clock() < end) {
++            /* the read waits for the memory controller */
++        }
++    }
++    if (addr + size > s->vram_size) {
++        return 0;
++    }
++    return ldn_le_p(s->vram_ptr + addr, size);
++}
++
++static void skl_aper_write(void *opaque, hwaddr addr, uint64_t val,
++                           unsigned size)
++{
++    PCIVGAState *d = opaque;
++    VGACommonState *s = &d->vga;
++    if (addr + size > s->vram_size) {
++        return;
++    }
++    stn_le_p(s->vram_ptr + addr, size, val);
++    memory_region_set_dirty(&s->vram, addr, size);
++}
++
++static const MemoryRegionOps skl_aper_ops = {
++    .read = skl_aper_read,
++    .write = skl_aper_write,
++    .valid.min_access_size = 1,
++    .valid.max_access_size = 8,
++    .impl.min_access_size = 1,
++    .impl.max_access_size = 8,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++};
++
++static uint64_t skl_io_read(void *opaque, hwaddr addr, unsigned size)
++{
++    PCIVGAState *d = opaque;
++    if (addr == 0) {
++        return d->skl_index;
++    }
++    if (addr == 4) {
++        if (d->skl_index == 0x100) {
++            return d->skl_unreal;   /* read by the video BIOS at start */
++        }
++        vbe_ioport_write_index(&d->vga, 0, d->skl_index & 0xffff);
++        return vbe_ioport_read_data(&d->vga, 0);
++    }
++    return 0;
++}
++
++static void skl_io_write(void *opaque, hwaddr addr, uint64_t val, unsigned size)
++{
++    PCIVGAState *d = opaque;
++    if (addr == 0) {
++        d->skl_index = val;
++    } else if (addr == 4) {
++        vbe_ioport_write_index(&d->vga, 0, d->skl_index & 0xffff);
++        vbe_ioport_write_data(&d->vga, 0, val & 0xffff);
++    }
++}
++
++static const MemoryRegionOps skl_io_ops = {
++    .read = skl_io_read,
++    .write = skl_io_write,
++    .valid.min_access_size = 1,
++    .valid.max_access_size = 4,
++    .impl.min_access_size = 4,
++    .impl.max_access_size = 4,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++};
++
++static void skl_vga_realize(PCIDevice *dev, Error **errp)
++{
++    PCIVGAState *d = PCI_VGA(dev);
++    VGACommonState *s = &d->vga;
++    uint64_t apsize;
++
++    if (!vga_common_init(s, OBJECT(dev), errp)) {
++        return;
++    }
++    vga_init(s, OBJECT(dev), pci_address_space(dev), pci_address_space_io(dev),
++             d->skl_vga_on);
++    /* no Bochs DISPI ports: Intel graphics has none */
++    portio_list_del(&s->vbe_port_list);
++    portio_list_destroy(&s->vbe_port_list);
++    if (!d->skl_vga_on) {
++        pci_config_set_class(dev->config, PCI_CLASS_DISPLAY_OTHER);
++    }
++    s->con = graphic_console_init(DEVICE(dev), 0, s->hw_ops, s);
++
++    pci_set_byte(&dev->config[PCI_REVISION_ID], 0x06);
++    pci_set_word(&dev->config[PCI_SUBSYSTEM_VENDOR_ID], 0x8086);
++    pci_set_word(&dev->config[PCI_SUBSYSTEM_ID], 0x2212);
++    pci_set_byte(&dev->config[PCI_INTERRUPT_PIN], 1);
++
++    /* BAR0: GTTMMADR, the EDID at offset 0 */
++    memory_region_init_io(&d->skl_gtt, OBJECT(dev), &unassigned_io_ops, NULL,
++                          "skl.gttmmadr", 16 * MiB);
++    qemu_edid_generate(d->edid, sizeof(d->edid), &d->edid_info);
++    qemu_edid_region_io(&d->skl_edid, OBJECT(dev), d->edid, sizeof(d->edid));
++    memory_region_add_subregion(&d->skl_gtt, 0, &d->skl_edid);
++    pci_register_bar(dev, 0, PCI_BASE_ADDRESS_SPACE_MEMORY |
++                     PCI_BASE_ADDRESS_MEM_TYPE_64, &d->skl_gtt);
++
++    /* BAR2: GMADR aperture (at least 256 MB, as on the real device) */
++    apsize = MAX(s->vram_size, 256 * MiB);
++    apsize = pow2ceil(apsize);
++    if (d->skl_read_ns) {
++        memory_region_init_io(&d->skl_aper, OBJECT(dev), &skl_aper_ops, d,
++                              "skl.gmadr", apsize);
++    } else {
++        memory_region_init(&d->skl_aper, OBJECT(dev), "skl.gmadr", apsize);
++        memory_region_add_subregion(&d->skl_aper, 0, &s->vram);
++    }
++    pci_register_bar(dev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY |
++                     PCI_BASE_ADDRESS_MEM_TYPE_64 | PCI_BASE_ADDRESS_MEM_PREFETCH,
++                     &d->skl_aper);
++
++    /* BAR4: IOBAR, MMIO index/data */
++    memory_region_init_io(&d->skl_io, OBJECT(dev), &skl_io_ops, d,
++                          "skl.iobar", 64);
++    pci_register_bar(dev, 4, PCI_BASE_ADDRESS_SPACE_IO, &d->skl_io);
++}
++
++static Property skl_vga_properties[] = {
++    DEFINE_PROP_UINT32("vgamem_mb", PCIVGAState, vga.vram_size_mb, 64),
++    DEFINE_PROP_UINT32("read-ns", PCIVGAState, skl_read_ns, 0),
++    DEFINE_PROP_BOOL("vga", PCIVGAState, skl_vga_on, true),
++    DEFINE_PROP_BOOL("unreal", PCIVGAState, skl_unreal, false),
++    DEFINE_EDID_PROPERTIES(PCIVGAState, edid_info),
++    DEFINE_PROP_END_OF_LIST(),
++};
++
++static void skl_vga_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++    PCIDeviceClass *k = PCI_DEVICE_CLASS(klass);
++
++    k->realize = skl_vga_realize;
++    k->romfile = "vgabios-skl.bin";
++    k->vendor_id = 0x8086;
++    k->device_id = 0x1912;
++    k->class_id = PCI_CLASS_DISPLAY_VGA;
++    device_class_set_props(dc, skl_vga_properties);
++    dc->hotpluggable = false;
++}
++
++static const TypeInfo skl_vga_info = {
++    .name          = TYPE_SKL_VGA,
++    .parent        = TYPE_PCI_VGA,
++    .class_init    = skl_vga_class_init,
++};
++
+ static void vga_register_types(void)
+ {
+     type_register_static(&vga_pci_type_info);
+     type_register_static(&vga_info);
+     type_register_static(&secondary_info);
++    type_register_static(&skl_vga_info);
+ }
+ 
+ type_init(vga_register_types)

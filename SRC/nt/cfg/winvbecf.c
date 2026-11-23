@@ -32,6 +32,7 @@ typedef struct {
     char           patch[160];
     unsigned long  nmodes;
     WVBMODE        modes[WVB_MAXMODES];
+    unsigned short natw, nath, nathz, pad2;     /* 1.3: native size, EDID extensions included */
 } WVBINFO;
 #pragma pack(pop)
 
@@ -44,6 +45,7 @@ static const unsigned short hz_tab[6] = { 60, 70, 72, 75, 85, 100 };
 #define V_DEBUG   "WinVbe.Debug"
 #define V_ROTATE  "WinVbe.Rotate"
 #define V_SHADOW  "WinVbe.Shadow"
+#define V_INT10   "WinVbe.Int10"
 #define V_GAMMA   "WinVbe.Gamma"
 #define V_BRIGHT  "WinVbe.Brightness"
 #define V_CONTR   "WinVbe.Contrast"
@@ -63,6 +65,10 @@ static char o_patch[160];
 
 typedef LONG (WINAPI *PCDS)(DEVMODEA *, DWORD);
 static PCDS pChangeDS;
+/* EnumDisplaySettingsA is NT 3.5+; loading it at run time (not a static import)
+   keeps WINVBECF.EXE able to start on NT 3.1, whose USER32 does not export it */
+typedef BOOL (WINAPI *PEDS)(LPCSTR, DWORD, DEVMODEA *);
+static PEDS pEnumDS;
 
 /* ------------------------------------------------------------------ */
 /* small runtime                                                       */
@@ -220,6 +226,9 @@ static void fill_info(HWND d)
     if (info.edid_ok) {
         const unsigned char *e = info.edid;
         int w = e[56] | ((e[58] & 0xF0) << 4), h = e[59] | ((e[61] & 0xF0) << 4);
+        /* 1.3 miniports also read the EDID extensions (DisplayID, CTA-861):
+           the native size of monitors beyond 4095 pixels */
+        if (info.size >= sizeof(info) && info.natw && info.nath) { w = info.natw; h = info.nath; }
         char mon[20];
         int i, j;
         mon[0] = 0;
@@ -640,7 +649,7 @@ static int install_nt3_4(HWND d)
     }
     if ((ntmaj == 3) != (has_srv == 1)) {
         MessageBoxA(d, ntmaj == 3 ? "This WINVBE.DLL is for Windows NT 4.0 - XP. Use the files of NT\\I386\\NT3X."
-                                  : "This WINVBE.DLL is for Windows NT 3.x. Use the files of NT\\I386\\NT4-XP.",
+                                  : "This WINVBE.DLL is for Windows NT 3.x. Use the files of NT\\I386\\NT4 (NT 4.0) or 2KXP (2000/XP).",
                     "WINVBE", MB_OK | MB_ICONSTOP);
         return 0;
     }
@@ -684,6 +693,43 @@ static int install_nt3_4(HWND d)
                     }
                 }
                 RegCloseKey(g);
+            }
+        }
+    } else {
+        /* NT 3.1 has no OpenGLDrivers mechanism and no system OPENGL32.DLL, and
+           its GDI32.DLL lacks the five pixel-format/SwapBuffers entry points.
+           Install our full OpenGL 2.1: copy OPENGL32.DLL (next to the ICD and
+           its software renderer) into System32, then run GL31SYS.EXE to add the
+           five functions to GDI32.DLL as forwarders to OPENGL32.  After the
+           reboot every program gets OpenGL with no per-program patching. */
+        static const char *gl0[2]  = { "WVBGL32.DLL", "WVBGLX.DLL" };          /* in the driver folder */
+        static const char *glsub[2] = { "OPENGL32.DLL", "GL31SYS.EXE" };      /* in the GL subfolder */
+        char gldir[MAX_PATH];
+        int ok = 1;
+        scpy(gldir, exedir, sizeof(gldir)); scat(gldir, "GL\\", sizeof(gldir));
+        for (i = 0; i < 2 && ok; i++) {
+            scpy(src, exedir, sizeof(src)); scat(src, gl0[i], sizeof(src));
+            scpy(dst, sys, sizeof(dst)); scat(dst, "\\", sizeof(dst)); scat(dst, gl0[i], sizeof(dst));
+            if (GetFileAttributesA(src) == 0xFFFFFFFF) { ok = 0; break; }
+            if (!sieq(src, dst) && !put_file(src, dst)) ok = 0;
+        }
+        for (i = 0; i < 2 && ok; i++) {
+            scpy(src, gldir, sizeof(src)); scat(src, glsub[i], sizeof(src));
+            scpy(dst, sys, sizeof(dst)); scat(dst, "\\", sizeof(dst)); scat(dst, glsub[i], sizeof(dst));
+            if (GetFileAttributesA(src) == 0xFFFFFFFF) { ok = 0; break; }
+            if (!sieq(src, dst) && !put_file(src, dst)) ok = 0;
+        }
+        if (ok) {
+            /* run System32\GL31SYS.EXE /Q to patch GDI32.DLL (rename-aside swap;
+               the patched copy takes effect at the reboot below) */
+            char exe[MAX_PATH + 16];
+            STARTUPINFOA si;
+            PROCESS_INFORMATION pi;
+            scpy(exe, sys, sizeof(exe)); scat(exe, "\\GL31SYS.EXE /Q", sizeof(exe));
+            memset(&si, 0, sizeof(si)); si.cb = sizeof(si);
+            if (CreateProcessA(NULL, exe, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+                WaitForSingleObject(pi.hProcess, 30000);
+                CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
             }
         }
     }
@@ -1117,6 +1163,7 @@ void WINAPI start(void)
     *p = 0;
     u = GetModuleHandleA("user32.dll");
     if (u && ntmaj >= 4) pChangeDS = (PCDS)GetProcAddress(u, "ChangeDisplaySettingsA");
+    if (u && ntmaj >= 4) pEnumDS = (PEDS)GetProcAddress(u, "EnumDisplaySettingsA");
     find_device();
     load_info();
     nt3_setup_sync();
@@ -1172,7 +1219,7 @@ static void make_lut(BYTE *lut, int gamma, int bright, int contr)
     }
 }
 
-static int f_rot, f_scale, f_shadow, f_gamma, f_bright, f_contr;
+static int f_rot, f_scale, f_shadow, f_gamma, f_bright, f_contr, f_int10, f0_int10;
 static int f0_rot, f0_scale, f0_shadow, f0_gamma, f0_bright, f0_contr;
 
 static const char *f_rot_names[4] = { "Normal", "90 degrees clockwise", "180 degrees (upside down)",
@@ -1180,6 +1227,10 @@ static const char *f_rot_names[4] = { "Normal", "90 degrees clockwise", "180 deg
 static const char *f_scale_names[3] = { "As the BIOS sets them", "Scaled to the native mode (aspect kept)",
                                         "Scaled to the native mode (full screen)" };
 static const char *f_shadow_names[3] = { "Automatic (real graphics cards)", "On", "Off" };
+/* WinVbe.Int10: how the miniport calls the video BIOS (32-bit NT: Windows
+   runs it in virtual 8086 mode, where newer Intel BIOSes fail; the x86
+   emulator runs them) */
+static const char *f_int10_names[3] = { "Automatic", "Windows (virtual 8086 mode)", "x86 emulator" };
 
 static void f_combo(HWND d, int id, const char **n, int k, int sel)
 {
@@ -1212,6 +1263,7 @@ static void f_show(HWND d)
     f_combo(d, IDC_FROT, f_rot_names, 4, f_rot / 90);
     f_combo(d, IDC_FSCALE, f_scale_names, 3, f_scale);
     f_combo(d, IDC_FSHADOW, f_shadow_names, 3, f_shadow);
+    f_combo(d, IDC_FINT10, f_int10_names, 3, f_int10);
     f_bar(d, IDC_FGAMMA, 30, 300, f_gamma);
     f_bar(d, IDC_FBRIGHT, -100, 100, f_bright);
     f_bar(d, IDC_FCONTR, 20, 300, f_contr);
@@ -1251,17 +1303,18 @@ static void f_load(void)
 {
     HKEY k = open_dev(KEY_READ);
     DWORD v;
-    f_rot = 0; f_scale = 0; f_shadow = 0; f_gamma = 100; f_bright = 0; f_contr = 100;
+    f_rot = 0; f_scale = 0; f_shadow = 0; f_gamma = 100; f_bright = 0; f_contr = 100; f_int10 = 0;
     if (k) {
         v = reg_dword(k, V_ROTATE, 0); f_rot = (v == 90 || v == 180 || v == 270) ? (int)v : 0;
         v = reg_dword(k, V_SCALE, 0); f_scale = v <= 2 ? (int)v : 0;
         v = reg_dword(k, V_SHADOW, 0); f_shadow = v <= 2 ? (int)v : 0;
+        v = reg_dword(k, V_INT10, 0); f_int10 = v <= 2 ? (int)v : 0;
         v = reg_dword(k, V_GAMMA, 100); f_gamma = (v >= 30 && v <= 300) ? (int)v : 100;
         v = reg_dword(k, V_BRIGHT, 1000); f_bright = (v >= 900 && v <= 1100) ? (int)v - 1000 : 0;
         v = reg_dword(k, V_CONTR, 100); f_contr = (v >= 20 && v <= 300) ? (int)v : 100;
         RegCloseKey(k);
     }
-    f0_rot = f_rot; f0_scale = f_scale; f0_shadow = f_shadow;
+    f0_rot = f_rot; f0_scale = f_scale; f0_shadow = f_shadow; f0_int10 = f_int10;
     f0_gamma = f_gamma; f0_bright = f_bright; f0_contr = f_contr;
 }
 
@@ -1281,6 +1334,7 @@ static int f_apply(HWND d)
     reg_set_dword(k, V_ROTATE, (DWORD)f_rot);
     reg_set_dword(k, V_SCALE, (DWORD)f_scale);
     reg_set_dword(k, V_SHADOW, (DWORD)f_shadow);
+    reg_set_dword(k, V_INT10, (DWORD)f_int10);
     reg_set_dword(k, V_GAMMA, (DWORD)f_gamma);
     reg_set_dword(k, V_BRIGHT, (DWORD)(f_bright + 1000));
     reg_set_dword(k, V_CONTR, (DWORD)f_contr);
@@ -1300,6 +1354,12 @@ static int f_apply(HWND d)
     }
     RegCloseKey(k);
     o_rot = f_rot;
+    if (f_int10 != f0_int10) {
+        /* the miniport reads it when Windows starts */
+        f0_int10 = f_int10;
+        status_f(d, "The way of calling the video BIOS changes when Windows is started again.");
+        restart(d);
+    }
     if (pChangeDS) {
         DEVMODEA dm;
         HDC dc = GetDC(NULL);
@@ -1323,10 +1383,10 @@ static int f_apply(HWND d)
             int found = 0;
             memset(&t, 0, sizeof(t));
             t.dmSize = sizeof(t);
-            for (i = 0; !found && EnumDisplaySettingsA(NULL, i, &t); i++)
+            for (i = 0; pEnumDS && !found && pEnumDS(NULL, i, &t); i++)
                 if ((int)t.dmPelsWidth == w && (int)t.dmPelsHeight == h && (int)t.dmBitsPerPel != bpp &&
                     t.dmBitsPerPel >= 8) found = 1;
-            for (i = 0; !found && EnumDisplaySettingsA(NULL, i, &t); i++)
+            for (i = 0; pEnumDS && !found && pEnumDS(NULL, i, &t); i++)
                 if ((int)t.dmPelsWidth == w && (int)t.dmPelsHeight == h && (int)t.dmBitsPerPel == bpp &&
                     (int)t.dmDisplayFrequency != hz) found = 1;
             if (found) {
@@ -1344,7 +1404,7 @@ static int f_apply(HWND d)
         }
     } else
         restart(d);
-    f0_rot = f_rot; f0_scale = f_scale; f0_shadow = f_shadow;
+    f0_rot = f_rot; f0_scale = f_scale; f0_shadow = f_shadow; f0_int10 = f_int10;
     f0_gamma = f_gamma; f0_bright = f_bright; f0_contr = f_contr;
     return 1;
 }
@@ -1400,15 +1460,18 @@ static INT_PTR CALLBACK features_proc(HWND d, UINT m, WPARAM wp, LPARAM lp)
         case IDC_FSHADOW:
             if (HIWORD(wp) == CBN_SELCHANGE) f_shadow = (int)SendDlgItemMessageA(d, IDC_FSHADOW, CB_GETCURSEL, 0, 0);
             return TRUE;
+        case IDC_FINT10:
+            if (HIWORD(wp) == CBN_SELCHANGE) f_int10 = (int)SendDlgItemMessageA(d, IDC_FINT10, CB_GETCURSEL, 0, 0);
+            return TRUE;
         case IDC_FDEFAULT:
-            f_rot = 0; f_scale = 0; f_shadow = 0; f_gamma = 100; f_bright = 0; f_contr = 100;
+            f_rot = 0; f_scale = 0; f_shadow = 0; f_gamma = 100; f_bright = 0; f_contr = 100; f_int10 = 0;
             f_show(d);
             return TRUE;
         case IDC_FAPPLY:
             f_apply(d);
             return TRUE;
         case IDOK:
-            if (f_rot != f0_rot || f_scale != f0_scale || f_shadow != f0_shadow || f_gamma != f0_gamma ||
+            if (f_rot != f0_rot || f_scale != f0_scale || f_shadow != f0_shadow || f_int10 != f0_int10 || f_gamma != f0_gamma ||
                 f_bright != f0_bright || f_contr != f0_contr)
                 f_apply(d);
             EndDialog(d, 1);

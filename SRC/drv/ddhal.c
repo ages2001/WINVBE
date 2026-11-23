@@ -174,7 +174,8 @@ static WORD add_ddmode(WORD n, WORD w, WORD h, WORD bpp)
 static const WORD std_res[] = {
     640,480, 800,600, 1024,768, 1152,864, 1280,720, 1280,768, 1280,800, 1280,960, 1280,1024,
     1360,768, 1366,768, 1400,1050, 1440,900, 1600,900, 1600,1200, 1680,1050, 1920,1080,
-    1920,1200, 2048,1536, 2560,1440, 2560,1600
+    1920,1200, 2048,1536, 2560,1080, 2560,1440, 2560,1600, 3440,1440, 3840,1080, 3840,1600,
+    3840,2160, 4096,2160, 5120,1440, 5120,2160, 5120,2880, 7680,2160, 7680,4320
 };
 
 /* the modes DirectDraw may set (EnumDisplayModes): those Display
@@ -184,6 +185,10 @@ static WORD dd_modes(void)
     static const WORD depth[] = { 8, 16, 24, 32 };
     WORD n = 0, i, j;
     n = add_ddmode(n, g.xres, g.yres, g.bpp);               /* the current mode first */
+    if (g.have_edid && g.edid_w && g.edid_h)                 /* then the monitor's native size */
+        for (j = 1; j < 4; j++)
+            if (vbe_mode_ok(g.edid_w, g.edid_h, depth[j]) == 0 && depth[j] != 24)
+                n = add_ddmode(n, g.edid_w, g.edid_h, depth[j]);
     for (j = 0; j < 4; j++)
         for (i = 0; i < sizeof(std_res) / sizeof(std_res[0]); i += 2) {
             WORD b = depth[j];

@@ -182,7 +182,7 @@ fi
 # NO_FAST_MATH: Mesa would switch the x87 to single precision while it
 # renders (START_FAST_MATH), which breaks its own IEEE floor/ceil tricks
 # (texel addresses one off: GL_NEAREST textures sampled the border)
-DEFS="-DNDEBUG -DNO_FAST_MATH -DWIN32_THREADS -DMESA_MINWARN -D__USE_MINGW_ANSI_STDIO=0 -D__MSVCRT_VERSION__=0x0600 \
+DEFS="-DNDEBUG -DMAX_WIDTH=8192 -DMAX_HEIGHT=8192 -DNO_FAST_MATH -DWIN32_THREADS -DMESA_MINWARN -D__USE_MINGW_ANSI_STDIO=0 -D__MSVCRT_VERSION__=0x0600 \
       -DWINVER=0x0400 -D_WIN32_WINNT=0x0400 -D_WIN32_IE=0x0400"
 INCS="-I$MESA/include -I$MESA/src/mesa -I$MESA/src/mesa/main -I$MESA/src/mesa/glapi \
       -I$MESA/src/mesa/shader -I$MESA/src/mesa/shader/slang -I$GEN"
@@ -360,6 +360,19 @@ if [ $X64 = 0 ]; then
         $SUBVER -Wl,--disable-dynamicbase -Wl,--disable-nxcompat -Wl,--no-insert-timestamp \
         -o "$OBJ/gl31pat.exe" "$HERE/../tools/gl31patch.c" -luser32 -lkernel32 -lgcc
     $STRIP "$OBJ/gl31pat.exe"
+
+    # GL31SYS.EXE (an 8.3 name for NT 3.1 FAT volumes): the system-wide enabler.
+    # Adds the five OpenGL functions to NT 3.1's own GDI32.DLL as forwarders to
+    # OPENGL32 (rebuilds the export table, fixes the PE checksum, swaps the live
+    # file aside), so every program gets OpenGL after a reboot with no per-program
+    # patching.  WINVBECF runs it automatically at install; /U undoes it, /Q is
+    # quiet (for the installer).  GUI program, imports only KERNEL32 and USER32.
+    echo "LD gl31sys.exe (NT 3.1 system OpenGL enabler)"
+    $CC -std=gnu99 -Os -march=i386 -mno-sse -mno-mmx -Wall -fno-stack-protector \
+        -fno-asynchronous-unwind-tables -fno-builtin -nostdlib -nostartfiles -Wl,-e,_start@0 -mwindows \
+        $SUBVER -Wl,--disable-dynamicbase -Wl,--disable-nxcompat -Wl,--no-insert-timestamp \
+        -o "$OBJ/gl31sys.exe" "$HERE/../tools/gl31sys.c" -luser32 -lkernel32 -lgcc
+    $STRIP "$OBJ/gl31sys.exe"
 fi
 
 # --------------------------------------------------------------------------

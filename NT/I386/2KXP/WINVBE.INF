@@ -1,18 +1,15 @@
-; WINVBE v1.2 - universal VESA/VGA/SVGA display driver
-; Windows NT 4.0, 2000, XP and Server 2003 (x86)
+; WINVBE v1.3 - universal VESA/VGA/SVGA display driver
+; Windows 2000, XP and Server 2003 (x86, Plug and Play)
 ;
-; Windows 2000/XP/2003: Device Manager > Display adapters > (adapter) >
-;   Update Driver > Install from a specific location > Don't search >
-;   Have Disk > this folder.
-; Windows NT 4.0: Control Panel > Display > Settings > Display Type >
-;   Change > Have Disk > this folder.
+; Device Manager > Display adapters > (adapter) > Update Driver >
+;   Install from a specific location > Don't search > Have Disk > this folder.
 
 [Version]
 Signature="$CHICAGO$"
 Provider=%WVB%
 ClassGUID={4D36E968-E325-11CE-BFC1-08002BE10318}
 Class=Display
-DriverVer=11/02/2026,1.2.0.0
+DriverVer=11/09/2026,1.3.0.0
 
 [DestinationDirs]
 DefaultDestDir   = 11
@@ -36,8 +33,19 @@ wvbgls.dll   = 1
 %WVB% = WINVBE.Mfg
 
 [WINVBE.Mfg]
+; Per-vendor matches (PCI\VEN_xxxx&CC_0300 is a compatible id every display
+; adapter of that vendor carries): Intel, AMD/ATI, nVidia and S3.  These rank
+; above the bare class-code match below, so WINVBE is chosen in preference to a
+; vendor driver that only puts the adapter in VGA fall-back - the Intel GMA /
+; ICH integrated graphics (e.g. Samsung RV510, ICH9M) among them.
+%WVB.Intel%  = winvbe, PCI\VEN_8086&CC_0300
+%WVB.AMD%    = winvbe, PCI\VEN_1002&CC_0300
+%WVB.NVIDIA% = winvbe, PCI\VEN_10DE&CC_0300
+%WVB.S3%     = winvbe, PCI\VEN_5333&CC_0300
+; and every other display adapter, by class code (VGA and 3D controllers)
 %WVB.Desc% = winvbe, PCI\CC_0300
 %WVB.Desc% = winvbe, PCI\CC_0001
+%WVB.Desc% = winvbe, PCI\CC_0380
 
 [winvbe]
 CopyFiles = winvbe.Miniport, winvbe.Display, winvbe.Tools, winvbe.OpenGL
@@ -104,7 +112,11 @@ HKR,,TypesSupported,0x00010001,7
 [Strings]
 WVB          = "WINVBE"
 WVB.Desc     = "WINVBE Universal VESA/VGA/SVGA"
-Disk         = "WINVBE v1.2 for Windows NT"
+WVB.Intel    = "WINVBE Universal VESA/VGA/SVGA (Intel)"
+WVB.AMD      = "WINVBE Universal VESA/VGA/SVGA (AMD/ATI)"
+WVB.NVIDIA   = "WINVBE Universal VESA/VGA/SVGA (nVidia)"
+WVB.S3       = "WINVBE Universal VESA/VGA/SVGA (S3)"
+Disk         = "WINVBE v1.3 for Windows NT"
 REG_SZ       = 0x00000000
 REG_MULTI_SZ = 0x00010000
 REG_DWORD    = 0x00010001

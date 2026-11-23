@@ -47,7 +47,7 @@ FONT 8, "Helv"
 BEGIN
     ICON            IDI_APP, -1, 10, 10, 18, 20
     LTEXT           "WINVBE Universal VESA/VGA/SVGA Display Driver", -1, 40, 10, 190, 9
-    LTEXT           "Version 1.2", -1, 40, 21, 190, 9
+    LTEXT           "Version 1.3", -1, 40, 21, 190, 9
     LTEXT           "For Windows 3.0, 3.1, Windows for Workgroups 3.1x and Windows 95, 98 and ME.", -1, 40, 36, 190, 18
     LTEXT           "VBE 1.2 - 3.0 BIOSes with linear or banked frame buffers, 8/15/16/24/32 bits per pixel, EDID monitor detection, VBE 3.0 refresh rates and custom resolutions on Bochs, QEMU and VirtualBox.", -1, 40, 56, 190, 36
     LTEXT           "Large fonts: glyphs derived from DejaVu (Bitstream Vera licence).", -1, 40, 94, 190, 18
@@ -72,7 +72,7 @@ BEGIN
     PUSHBUTTON      "Cancel", IDCANCEL, 196, 150, 50, 14
 END
 
-IDD_COLOR DIALOG 20, 16, 252, 212
+IDD_COLOR DIALOG 20, 16, 252, 244
 STYLE DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
 CAPTION "WINVBE Colors and Screen"
 FONT 8, "Helv"
@@ -92,8 +92,12 @@ BEGIN
     COMBOBOX        IDC_CROTATE, 80, 140, 164, 60, CBS_DROPDOWNLIST | WS_TABSTOP
     LTEXT           "&Small resolutions:", -1, 8, 158, 70, 8
     COMBOBOX        IDC_CSCALE, 80, 156, 164, 50, CBS_DROPDOWNLIST | WS_TABSTOP
-    LTEXT           "Turning and scaling take effect when Windows is started again.", -1, 8, 174, 236, 8
-    PUSHBUTTON      "&Defaults", IDC_CDEFAULT, 8, 190, 50, 14
-    DEFPUSHBUTTON   "OK", IDOK, 140, 190, 50, 14
-    PUSHBUTTON      "Cancel", IDCANCEL, 196, 190, 50, 14
+    LTEXT           "S&hadow buffer:", -1, 8, 174, 70, 8
+    COMBOBOX        IDC_CSHADOW, 80, 172, 164, 40, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT           "&Video BIOS calls:", -1, 8, 190, 70, 8
+    COMBOBOX        IDC_CBIOSEMU, 80, 188, 164, 50, CBS_DROPDOWNLIST | WS_TABSTOP
+    LTEXT           "These four take effect when Windows is started again.", -1, 8, 206, 236, 8
+    PUSHBUTTON      "&Defaults", IDC_CDEFAULT, 8, 222, 50, 14
+    DEFPUSHBUTTON   "OK", IDOK, 140, 222, 50, 14
+    PUSHBUTTON      "Cancel", IDCANCEL, 196, 222, 50, 14
 END

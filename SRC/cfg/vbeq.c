@@ -6,6 +6,7 @@
 #include <windows.h>
 #endif
 #include "vbeq.h"
+#include "../drv/edidx.h"
 
 typedef struct {
     QDWORD edi, esi, ebp, res, ebx, edx, ecx, eax;
@@ -156,6 +157,29 @@ static void parse_edid(VQINFO __far *vi)
     }
 }
 
+/* extension blocks (DisplayID, CTA-861): the native timing of a monitor
+   wider or taller than 4095 pixels, which the base block cannot hold */
+static void ext_edid(VQINFO __far *vi)
+{
+    static unsigned char blk[128];
+    static EDIDTM best, t;
+    RMR r;
+    int i, n = vi->edid[126];
+    _fmemset(&best, 0, sizeof(best));
+    _fmemcpy(blk, vi->edid, 128);
+    edidx_dtd(blk + 54, &best);
+    if (n > 3) n = 3;
+    for (i = 1; i <= n; i++) {
+        _fmemset(buf + 0x400, 0, 128);
+        rclear(&r); r.eax = 0x4F15; r.ebx = 1; r.edx = i; r.es = buf_seg; r.edi = 0x400;
+        if (!int10(&r) || (QWORD)r.eax != 0x004F) break;
+        _fmemcpy(blk, buf + 0x400, 128);
+        _fmemset(&t, 0, sizeof(t));
+        if (edidx_ext(blk, &t)) edidx_merge(&best, &t);
+    }
+    if (best.src > 1) { vi->natw = best.ha; vi->nath = best.va; vi->nathz = best.hz; }
+}
+
 static QWORD dispi_rd(QWORD i) { outpw(0x1CE, i); return inpw(0x1CF); }
 
 int vq_query(VQINFO __far *vi)
@@ -169,7 +193,7 @@ int vq_query(VQINFO __far *vi)
     /* Bochs DISPI */
     vi->dispi_id = dispi_rd(0);
     if (vi->dispi_id < 0xB0C0 || vi->dispi_id > 0xB0CF) vi->dispi_id = 0;
-    else vi->dispi_memkb = vi->dispi_id >= 0xB0C5 ? dispi_rd(10) * 64 : 4096;
+    else vi->dispi_memkb = vi->dispi_id >= 0xB0C5 ? (QDWORD)dispi_rd(10) * 64 : 4096;
 
     _fmemset(buf, 0, 512);
     _fmemcpy(buf, "VBE2", 4);
@@ -229,6 +253,7 @@ int vq_query(VQINFO __far *vi)
             _fmemcpy(vi->edid, buf + 0x400, 128);
             vi->edid_ok = 1;
             parse_edid(vi);
+            ext_edid(vi);
         }
     }
     return 1;

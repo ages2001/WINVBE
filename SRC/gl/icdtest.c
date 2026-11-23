@@ -28,7 +28,12 @@ static void log_raw(const char *s, int n)
 {
     DWORD w;
     if (n < 0) n = lstrlen(s);
-    WriteFile(lg, s, (DWORD) n, &w, NULL);
+    { char o[2048]; int _i, _j = 0;
+      for (_i = 0; _i < n && _j < (int) sizeof(o) - 1; _i++) {
+          if (s[_i] == '\n' && (_i == 0 || s[_i-1] != '\r')) o[_j++] = '\r';
+          o[_j++] = s[_i];
+      }
+      WriteFile(lg, o, (DWORD) _j, &w, NULL); }
 }
 
 static void logf_(const char *f, ...)
